@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Markdown Studio | 原生输出样例</title>
+<style>
+body { color:#1f2328; font:12pt/1.6 'Segoe UI','Microsoft YaHei',sans-serif; margin:0; }
+h1 { font-size:26pt; margin:0 0 9mm; border-bottom:1px solid #979da3; }
+h2 { font-size:16pt; margin:8mm 0 2mm; }
+p { max-width:42em; } table { border-collapse:collapse; width:100%; } th,td {padding:2.5mm; border:1px solid #aeb4ba; text-align:left;} th {background:#eee;}
+.kicker { color:#52606a; letter-spacing:.08em; font:10pt 'Segoe UI'; margin:0 0 3mm; }
+section + section { break-before:page; } math {font-size:20pt;margin:5mm 0;} svg {width:100%;max-width:145mm;}
+</style>
+<section><p class="kicker">MARKDOWN STUDIO / 01</p><h1>纸上阅读：中文与表格</h1>
+<p>这是一份完全离线的原生输出样例。第一页面核对汉字、标点和表格边界，第二页面核对矢量图与数学排版。</p>
+<h2>原生输出检查</h2><table><thead><tr><th>内容</th><th>预期表现</th></tr></thead><tbody>
+<tr><td>中文与 English</td><td>混合文字可阅读、选取</td></tr><tr><td>分页</td><td>每页保留边距，不包含应用按钮</td></tr><tr><td>矢量内容</td><td>缩放时保留轮廓</td></tr></tbody></table></section>
+<section><p class="kicker">MARKDOWN STUDIO / 02</p><h1>公式与流程图</h1><h2>等差数列求和</h2>
+<math xmlns="http://www.w3.org/1998/Math/MathML" display="block"><msub><mi>S</mi><mi>n</mi></msub><mo>=</mo><mfrac><mrow><mi>n</mi><mo>(</mo><mi>n</mi><mo>+</mo><mn>1</mn><mo>)</mo></mrow><mn>2</mn></mfrac></math>
+<h2>从快照到文件</h2><svg viewBox="0 0 540 100" role="img" aria-label="快照、排版、文件三个步骤"><g fill="#f6f8fa" stroke="#59636e"><rect x="2" y="18" width="130" height="64" rx="6"/><rect x="205" y="18" width="130" height="64" rx="6"/><rect x="408" y="18" width="130" height="64" rx="6"/></g><g font-size="21" text-anchor="middle" fill="#1f2328"><text x="67" y="57">冻结快照</text><text x="270" y="57">页面排版</text><text x="473" y="57">生成文件</text></g><path d="M143 50h50l-8 -6m8 6 -8 6M346 50h50l-8 -6m8 6 -8 6" fill="none" stroke="#24292f" stroke-width="2"/></svg></section>
+</html>

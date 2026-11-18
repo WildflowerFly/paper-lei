@@ -436,6 +436,8 @@ PDF 默认 A4、纵向、16mm 页边距，可选 Letter / 横向；生成时禁�
 
 专用 WebView 仅有一次性完成事件权限，核对窗口 label、任务 ID 与 nonce；不对内容暴露 `save_document` 等业务命令。完成或取消后清理本次临时资源，保留必要的错误诊断。
 
+FND-04 实机确认 `with_webview` → `ICoreWebView2_7::PrintToPdf` 与 `ICoreWebView2_16::ShowPrintUI(SYSTEM)` 可用。PDF 回调同时检查 HRESULT 与成功标志；取消是丢弃临时输出，不承诺中止 WebView2 内部工作。系统打印 UI 不提供用户完成/取消的回调，打开窗口不得当作已打印；正式打印若需可靠提交状态，须使用应用控制的确认流程并调用带状态的原生打印 API。详见[原型证据](./verification/FND-04.md)。
+
 ## 11. IPC 契约与安全边界
 
 ### 11.1 主要命令
