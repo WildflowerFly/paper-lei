@@ -8,7 +8,9 @@ for (const theme of ['light', 'dark'] as const) {
     })
     await page.emulateMedia({ colorScheme: theme })
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: 'Markdown Studio' })).toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: 'Markdown Studio', exact: true }).first(),
+    ).toBeVisible()
     await expect(page.getByText('本地 Markdown 工作台')).toBeVisible()
     expect(external).toEqual([])
   })
