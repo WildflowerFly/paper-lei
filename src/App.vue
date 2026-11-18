@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
 import UiButton from './components/ui/UiButton.vue'
 import {
   commandIsEnabled,
@@ -12,6 +12,12 @@ import {
 
 type LayoutMode = 'split' | 'preview' | 'source'
 type NavTab = 'files' | 'search' | 'outline'
+type FileEntry = {
+  id: string
+  label: string
+  path: string
+  state?: 'ready' | 'missing' | 'loading' | 'error'
+}
 
 const shell = useTemplateRef('shell')
 const central = useTemplateRef('central')
@@ -31,6 +37,27 @@ const tabs = ref([
 const openMenu = ref<CommandMenu | null>(null)
 const lastCommand = ref('')
 const dragging = ref(false)
+const navTabs: { id: NavTab; label: string }[] = [
+  { id: 'files', label: '文件' },
+  { id: 'search', label: '搜索' },
+  { id: 'outline', label: '目录' },
+]
+const fileEntries: FileEntry[] = [
+  { id: 'readme', label: 'README.md', path: 'docs/README.md' },
+  { id: 'readme-example', label: 'README.md', path: 'examples/README.md' },
+  { id: 'notes', label: 'notes.md', path: 'docs/notes.md' },
+  { id: 'missing', label: 'archive.md', path: 'docs/archive.md', state: 'missing' },
+]
+const recentFiles = ref(['docs/README.md', 'docs/notes.md'])
+const favoriteFiles = ref(['docs/README.md'])
+const duplicateNames = computed(
+  () =>
+    new Set(
+      fileEntries
+        .map((file) => file.label)
+        .filter((label, _, all) => all.filter((item) => item === label).length > 1),
+    ),
+)
 const hasDocument = computed(() => activeTab.value !== null)
 
 const isNarrow = computed(() => viewportWidth.value - navWidth.value < 640)
@@ -169,6 +196,32 @@ function closeTab(tabId: string) {
   dispatchCommand('file.close')
 }
 
+function openFile(file: FileEntry) {
+  if (file.state === 'missing') {
+    lastCommand.value = '文件不存在，可重新定位或移除记录'
+    return
+  }
+  const existing = tabs.value.find((tab) => tab.id === file.id)
+  if (!existing) tabs.value.push({ id: file.id, label: file.label, modified: false })
+  activeTab.value = file.id
+  if (!recentFiles.value.includes(file.path)) recentFiles.value.unshift(file.path)
+}
+
+function onNavTabKeydown(event: KeyboardEvent, tabIndex: number) {
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+  const next =
+    event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? navTabs.length - 1
+        : (tabIndex + (event.key === 'ArrowRight' ? 1 : -1) + navTabs.length) % navTabs.length
+  activeNav.value = navTabs[next]!.id
+  nextTick(() =>
+    document.querySelector<HTMLElement>(`[data-nav-tab="${activeNav.value}"]`)?.focus(),
+  )
+  event.preventDefault()
+}
+
 function shortcutForEvent(event: KeyboardEvent) {
   const modifier = event.ctrlKey || event.metaKey
   if (event.key === 'F8') return 'F8'
@@ -298,17 +351,16 @@ onBeforeUnmount(() => {
       </div>
       <div class="nav-tabs" role="tablist" aria-label="导航页签">
         <button
-          v-for="tab in [
-            { id: 'files', label: '文件' },
-            { id: 'search', label: '搜索' },
-            { id: 'outline', label: '目录' },
-          ]"
+          v-for="(tab, tabIndex) in navTabs"
           :key="tab.id"
+          :data-nav-tab="tab.id"
           type="button"
           role="tab"
+          :tabindex="activeNav === tab.id ? 0 : -1"
           :aria-selected="activeNav === tab.id"
           :class="{ selected: activeNav === tab.id }"
           @click="activeNav = tab.id as NavTab"
+          @keydown="onNavTabKeydown($event, tabIndex)"
         >
           {{ tab.label }}
         </button>
@@ -316,10 +368,40 @@ onBeforeUnmount(() => {
       <section class="nav-content" :aria-label="`${activeNav}内容`">
         <template v-if="activeNav === 'files'">
           <div class="nav-section-title">文件</div>
-          <button class="file-entry selected" type="button">README.md</button>
-          <button class="file-entry" type="button">notes.md</button>
+          <button
+            v-for="file in fileEntries"
+            :key="file.id"
+            class="file-entry"
+            :class="{ selected: activeTab === file.id, missing: file.state === 'missing' }"
+            type="button"
+            :aria-label="`${file.label} ${file.path}`"
+            @click="openFile(file)"
+          >
+            <span>{{ file.label }}</span><small v-if="duplicateNames.has(file.label)">{{
+              file.path
+            }}</small>
+            <em v-if="file.state === 'missing'">文件不存在</em>
+          </button>
           <div class="nav-section-title secondary">最近打开</div>
-          <p class="nav-empty">打开文件夹后显示文件</p>
+          <button
+            v-for="path in recentFiles"
+            :key="path"
+            class="nav-record"
+            type="button"
+            @click="lastCommand = `最近打开：${path}`"
+          >
+            {{ path }}
+          </button>
+          <div class="nav-section-title secondary">收藏</div>
+          <button
+            v-for="path in favoriteFiles"
+            :key="path"
+            class="nav-record"
+            type="button"
+            @click="lastCommand = `收藏：${path}`"
+          >
+            {{ path }}
+          </button>
         </template>
         <template v-else-if="activeNav === 'search'">
           <label class="nav-search"
@@ -327,7 +409,17 @@ onBeforeUnmount(() => {
           /></label>
           <p class="nav-empty">暂无搜索结果</p>
         </template>
-        <p v-else class="nav-empty">当前文档暂无标题</p>
+        <template v-else>
+          <p v-if="!activeTab" class="nav-empty">打开文档后显示目录</p>
+          <button
+            v-else
+            class="outline-entry"
+            type="button"
+            @click="lastCommand = '已定位到 Markdown Studio'"
+          >
+            Markdown Studio
+          </button>
+        </template>
       </section>
       <div
         class="nav-resizer"
@@ -394,7 +486,12 @@ onBeforeUnmount(() => {
           源码
         </button>
       </div>
-      <section class="document-pane preview-pane" aria-labelledby="preview-title" tabindex="0">
+      <section
+        v-if="activeTab"
+        class="document-pane preview-pane"
+        aria-labelledby="preview-title"
+        tabindex="0"
+      >
         <header class="pane-header">
           <span id="preview-title">预览</span><span class="pane-hint">实时阅读</span>
         </header>
@@ -422,7 +519,7 @@ onBeforeUnmount(() => {
         @pointerdown="startSplitResize"
         @keydown="onKeyResize"
       />
-      <section class="document-pane source-pane" aria-labelledby="source-title">
+      <section v-if="activeTab" class="document-pane source-pane" aria-labelledby="source-title">
         <header class="pane-header">
           <span id="source-title">源码</span><span class="pane-hint">Markdown</span>
         </header>
@@ -430,6 +527,14 @@ onBeforeUnmount(() => {
 # Markdown Studio
 
 在右侧编辑 Markdown 源码。</textarea>
+      </section>
+      <section v-if="!activeTab" class="empty-document" aria-label="欢迎页">
+        <h2>开始使用 Markdown Studio</h2>
+        <p>打开文件、新建文档，或从最近打开中继续。</p>
+        <div class="empty-actions">
+          <UiButton variant="primary" @click="dispatchCommand('file.new')">新建文档</UiButton
+          ><UiButton @click="activeNav = 'files'">打开文件</UiButton>
+        </div>
       </section>
     </section>
 

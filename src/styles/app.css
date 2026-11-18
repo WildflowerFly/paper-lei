@@ -217,7 +217,8 @@ button:disabled {
   margin-top: 24px;
 }
 .file-entry {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   width: 100%;
   overflow: hidden;
   padding: 5px 8px;
@@ -227,6 +228,39 @@ button:disabled {
   text-align: start;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.file-entry small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+.file-entry em {
+  color: var(--danger);
+  font-size: 11px;
+  font-style: normal;
+}
+.file-entry.missing {
+  color: var(--text-secondary);
+}
+.nav-record,
+.outline-entry {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-record:hover,
+.outline-entry:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 .file-entry:hover,
 .file-entry.selected {
@@ -317,6 +351,27 @@ button:disabled {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+.empty-document {
+  grid-column: 1 / -1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+.empty-document h2,
+.empty-document p {
+  margin: 0;
+}
+.empty-document h2 {
+  color: var(--text-primary);
+}
+.empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 .document-pane {
   min-width: 0;
