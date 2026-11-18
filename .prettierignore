@@ -11,4 +11,5 @@ docs/prd.md
 docs/tdd.md
 docs/ui-ux-design.md
 docs/task-list.md
-tests/fixtures
+tests/fixtures/*.md
+tests/fixtures/print-sample.html
