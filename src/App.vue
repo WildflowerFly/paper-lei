@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
 import UiButton from './components/ui/UiButton.vue'
+import {
+  commandIsEnabled,
+  commandMenus,
+  commands,
+  type CommandDefinition,
+  type CommandId,
+  type CommandMenu,
+} from './services/commands'
 
 type LayoutMode = 'split' | 'preview' | 'source'
 type NavTab = 'files' | 'search' | 'outline'
@@ -15,13 +23,15 @@ const navVisible = ref(true)
 const layoutMode = ref<LayoutMode>('split')
 const narrowPane = ref<'preview' | 'source'>('preview')
 const activeNav = ref<NavTab>('files')
-const activeTab = ref('readme')
-const dragging = ref(false)
-
-const tabs = [
+const activeTab = ref<string | null>('readme')
+const tabs = ref([
   { id: 'readme', label: 'README.md', modified: false },
   { id: 'notes', label: 'notes.md', modified: true },
-]
+])
+const openMenu = ref<CommandMenu | null>(null)
+const lastCommand = ref('')
+const dragging = ref(false)
+const hasDocument = computed(() => activeTab.value !== null)
 
 const isNarrow = computed(() => viewportWidth.value - navWidth.value < 640)
 const navCollapsed = computed(() => !navVisible.value || isNarrow.value)
@@ -103,12 +113,89 @@ function chooseMode(mode: LayoutMode) {
   if (mode !== 'split') narrowPane.value = mode
 }
 
+function menuCommands(menu: CommandMenu) {
+  return commands.filter((command) => command.menu === menu)
+}
+
+function commandEnabled(command: CommandDefinition) {
+  return commandIsEnabled(command, hasDocument.value)
+}
+
+function dispatchCommand(id: CommandId) {
+  const command = commands.find((item) => item.id === id)
+  if (!command || !commandEnabled(command)) return
+  openMenu.value = null
+  lastCommand.value = command.label
+  switch (id) {
+    case 'view.navigation':
+      toggleNav()
+      break
+    case 'view.split':
+      chooseMode('split')
+      break
+    case 'view.preview':
+      chooseMode('preview')
+      break
+    case 'view.source':
+      chooseMode('source')
+      break
+    case 'view.outline':
+      activeNav.value = 'outline'
+      break
+    case 'view.theme':
+      document.documentElement.dataset.theme =
+        document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
+      break
+    case 'file.new': {
+      const id = `untitled-${tabs.value.length + 1}`
+      tabs.value.push({ id, label: `未命名 ${tabs.value.length + 1}`, modified: true })
+      activeTab.value = id
+      break
+    }
+    case 'file.close': {
+      const position = tabs.value.findIndex((tab) => tab.id === activeTab.value)
+      if (position < 0) break
+      tabs.value.splice(position, 1)
+      activeTab.value = tabs.value[position]?.id ?? tabs.value[position - 1]?.id ?? null
+      break
+    }
+    default:
+      break
+  }
+}
+
+function closeTab(tabId: string) {
+  if (activeTab.value !== tabId) activeTab.value = tabId
+  dispatchCommand('file.close')
+}
+
+function shortcutForEvent(event: KeyboardEvent) {
+  const modifier = event.ctrlKey || event.metaKey
+  if (event.key === 'F8') return 'F8'
+  if (event.key === 'F11') return 'F11'
+  if (!modifier) return ''
+  const key = event.key.toUpperCase()
+  if (event.altKey && key === 'O') return 'Ctrl+Alt+O'
+  if (event.shiftKey) return `Ctrl+Shift+${key}`
+  return `Ctrl+${key}`
+}
+
+function onGlobalKeydown(event: KeyboardEvent) {
+  if (event.isComposing) return
+  const shortcut = shortcutForEvent(event)
+  const command = commands.find((item) => item.shortcut === shortcut)
+  if (!command) return
+  event.preventDefault()
+  dispatchCommand(command.id)
+}
+
 let resizeObserver: ResizeObserver | undefined
 onMounted(() => {
   updateViewport()
   window.addEventListener('resize', updateViewport)
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', stopResize)
+  window.addEventListener('keydown', onGlobalKeydown)
   resizeObserver = new ResizeObserver(updateCentralSize)
   if (central.value) resizeObserver.observe(central.value)
   updateCentralSize()
@@ -117,6 +204,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('resize', updateViewport)
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', stopResize)
+  window.removeEventListener('keydown', onGlobalKeydown)
   resizeObserver?.disconnect()
 })
 </script>
@@ -132,38 +220,74 @@ onBeforeUnmount(() => {
     <header class="app-toolbar">
       <h1 id="app-title" class="app-brand">Markdown Studio</h1>
       <nav class="command-bar" aria-label="应用菜单">
-        <button
-          v-for="label in ['文件', '编辑', '视图', '格式', '工具', '帮助']"
-          :key="label"
-          type="button"
-        >
-          {{ label }}
-        </button>
+        <div v-for="menu in commandMenus" :key="menu.id" class="command-menu">
+          <button
+            type="button"
+            :aria-expanded="openMenu === menu.id"
+            aria-haspopup="menu"
+            @click="openMenu = openMenu === menu.id ? null : menu.id"
+          >
+            {{ menu.label }}
+          </button>
+          <div
+            v-if="openMenu === menu.id"
+            class="command-menu-panel"
+            role="menu"
+            :aria-label="menu.label"
+          >
+            <button
+              v-for="command in menuCommands(menu.id)"
+              :key="command.id"
+              type="button"
+              role="menuitem"
+              :disabled="!commandEnabled(command)"
+              @click="dispatchCommand(command.id)"
+            >
+              <span>{{ command.label }}</span><kbd v-if="command.shortcut">{{
+                command.shortcut
+              }}</kbd>
+            </button>
+          </div>
+        </div>
       </nav>
       <div class="toolbar-actions">
-        <UiButton aria-label="切换导航栏" @click="toggleNav">{{
+        <UiButton aria-label="切换导航栏" @click="dispatchCommand('view.navigation')">{{
           navCollapsed ? '显示导航' : '隐藏导航'
         }}</UiButton>
+        <UiButton
+          :disabled="!commandEnabled(commands.find((command) => command.id === 'file.save')!)"
+          @click="dispatchCommand('file.save')"
+          >保存</UiButton
+        >
+        <UiButton
+          :disabled="!commandEnabled(commands.find((command) => command.id === 'file.export')!)"
+          @click="dispatchCommand('file.export')"
+          >导出</UiButton
+        >
         <div class="layout-switcher" role="group" aria-label="文档布局">
-          <button type="button" :aria-pressed="layoutMode === 'split'" @click="chooseMode('split')">
+          <button
+            type="button"
+            :aria-pressed="layoutMode === 'split'"
+            @click="dispatchCommand('view.split')"
+          >
             双栏
           </button>
           <button
             type="button"
             :aria-pressed="layoutMode === 'preview'"
-            @click="chooseMode('preview')"
+            @click="dispatchCommand('view.preview')"
           >
             预览
           </button>
           <button
             type="button"
             :aria-pressed="layoutMode === 'source'"
-            @click="chooseMode('source')"
+            @click="dispatchCommand('view.source')"
           >
             源码
           </button>
         </div>
-        <UiButton aria-label="当前主题">主题</UiButton>
+        <UiButton aria-label="当前主题" @click="dispatchCommand('view.theme')">主题</UiButton>
       </div>
     </header>
 
@@ -222,19 +346,28 @@ onBeforeUnmount(() => {
     </aside>
 
     <div class="document-tabs" role="tablist" aria-label="打开的文档">
-      <button
+      <div
         v-for="tab in tabs"
         :key="tab.id"
         class="document-tab"
         :class="{ selected: activeTab === tab.id }"
-        type="button"
         role="tab"
+        tabindex="0"
         :aria-selected="activeTab === tab.id"
         @click="activeTab = tab.id"
+        @keydown.enter="activeTab = tab.id"
+        @keydown.space.prevent="activeTab = tab.id"
       >
         <span v-if="tab.modified" aria-label="未保存">●</span>{{ tab.label
-        }}<span class="tab-close" aria-label="关闭标签">×</span>
-      </button>
+        }}<button
+          class="tab-close"
+          type="button"
+          aria-label="关闭标签"
+          @click.stop="closeTab(tab.id)"
+        >
+          ×
+        </button>
+      </div>
       <button class="new-tab" type="button" aria-label="新建标签">+</button>
     </div>
 
@@ -301,6 +434,9 @@ onBeforeUnmount(() => {
     </section>
 
     <footer class="status-bar" aria-label="文档状态">
+      <span class="command-feedback" role="status" aria-live="polite">{{
+        lastCommand ? `已执行：${lastCommand}` : ''
+      }}</span>
       <span class="status-document"
         >{{ activeTab === 'readme' ? 'README.md' : 'notes.md' }} · 已保存</span
       ><span>34 字 · 52 字符</span><span>行 3，列 7</span

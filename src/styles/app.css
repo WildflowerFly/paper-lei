@@ -90,6 +90,9 @@ button:disabled {
 .command-bar {
   min-width: 0;
 }
+.command-menu {
+  position: relative;
+}
 .command-bar button,
 .toolbar-actions .ui-button,
 .layout-switcher button {
@@ -98,6 +101,45 @@ button:disabled {
   border: 0;
   border-radius: 4px;
   background: transparent;
+}
+.command-menu-panel {
+  position: absolute;
+  z-index: 5;
+  inset-block-start: calc(100% + 4px);
+  inset-inline-start: 0;
+  display: grid;
+  min-width: 220px;
+  padding: 4px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  box-shadow: var(--popup-shadow);
+}
+.command-menu-panel button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  text-align: start;
+}
+.command-menu-panel button:hover:not(:disabled),
+.command-menu-panel button:focus-visible {
+  background: var(--bg-hover);
+}
+.command-menu-panel button:disabled {
+  color: var(--text-disabled);
+}
+.command-menu-panel kbd {
+  margin-inline-start: 20px;
+  color: var(--text-secondary);
+  font:
+    11px 'Cascadia Code',
+    Consolas,
+    monospace;
 }
 .command-bar button:hover,
 .toolbar-actions .ui-button:hover,
@@ -245,6 +287,10 @@ button:disabled {
   color: var(--text-secondary);
   white-space: nowrap;
 }
+.document-tab:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
 .document-tab.selected {
   background: var(--bg-panel);
   color: var(--text-primary);
@@ -376,6 +422,11 @@ button:disabled {
   white-space: nowrap;
 }
 .status-document {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.command-feedback {
+  min-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
