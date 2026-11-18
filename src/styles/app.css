@@ -1,0 +1,23 @@
+:root {
+  color-scheme: light dark;
+  font: 13px/1.5 'Segoe UI', 'Microsoft YaHei UI', sans-serif;
+  color: light-dark(#1f2328, #e6edf3);
+  background: light-dark(#fff, #0d1117);
+}
+
+body {
+  margin: 0;
+}
+
+.welcome {
+  min-height: 100vh;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+}
+
+.welcome h1,
+.welcome p {
+  margin: 0;
+}

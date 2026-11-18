@@ -1,0 +1,6 @@
+{
+  "identifier": "main",
+  "description": "启动窗口不需要文件、网络或系统命令权限。",
+  "windows": ["main"],
+  "permissions": []
+}
