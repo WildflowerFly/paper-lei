@@ -9,7 +9,17 @@ export default tseslint.config(
   ...vue.configs['flat/recommended'],
   {
     languageOptions: {
-      globals: { process: 'readonly', console: 'readonly', Buffer: 'readonly', URL: 'readonly' },
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly',
+        fetch: 'readonly',
+        WebSocket: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        performance: 'readonly',
+      },
       parserOptions: { parser: tseslint.parser },
     },
     rules: {
