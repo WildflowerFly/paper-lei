@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    markdown_studio::run();
+    tauri::Builder::default()
+        .run(tauri::generate_context!())
+        .expect("无法启动 Markdown Studio");
 }
