@@ -1,0 +1,14 @@
+node_modules
+dist
+.tmp
+src-tauri/target
+src-tauri/gen
+test-results
+playwright-report
+pnpm-lock.yaml
+pnpm-workspace.yaml
+docs/prd.md
+docs/tdd.md
+docs/ui-ux-design.md
+docs/task-list.md
+tests/fixtures

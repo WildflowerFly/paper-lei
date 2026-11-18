@@ -18,6 +18,12 @@
 
 4. 运行 `pnpm desktop:build` 构建 release，启动 `src-tauri/target/release/markdown-studio.exe`。使用 GNU 工具链时须保留同目录的 `WebView2Loader.dll`。release 不需要 Vite 或网络；此命令不生成安装包。
 
+## 开发检查
+
+首次运行 `pnpm exec playwright install chromium`。在已配置桌面工具链的终端运行 `pnpm check`，依次检查格式、ESLint、类型、Vitest、Rust fmt/clippy/test、生产前端构建与 Playwright。也可单独运行 `pnpm test`、`pnpm check:rust` 或 `pnpm test:e2e`。E2E 报告位于 `playwright-report/`，失败截图在 `test-results/`；浏览器通过不替代原生验收。
+
+`tests/fixtures/` 只放合成小样例；`pnpm fixtures` 在 `.tmp/fixtures/` 生成正文、代码、图表/图片混合三类 UTF-8 文件（各 1 / 5 / 10 MiB）。完整重复块之后用 ASCII 空格补齐，不截断多字节字符。样例不读取工作空间外的文档。
+
 ## 代码结构
 
 - `src/`：Vue 入口、组件、静态资产和样式。编辑器、Worker、业务服务随相应任务加入。
