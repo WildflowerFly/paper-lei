@@ -446,8 +446,11 @@ FND-04 实机确认 `with_webview` → `ICoreWebView2_7::PrintToPdf` 与 `ICoreW
 
 下表为逻辑接口，最终 Rust 命名与字段可细化，但语义需保持一致。
 
+文件相关命令只接收 Rust 建立的授权 token 和经过校验的相对操作；前端不能通过业务 IPC 建立任意绝对路径授权。窗口与会话边界由 Rust 再次检查，渲染内容和无权限 WebView 不具备这些命令的 capability。
+
 | 命令 | 输入核心字段 | 输出 / 行为 |
 | --- | --- | --- |
+| `inspect_authorized_entry` | 授权 token、受校验的相对路径 | 文件/目录名称、类型和句柄文件身份；token 撤销或身份变化立即失效 |
 | `choose_and_open_documents` | 原生选择选项 | 授权并返回文档 token、文本和 `DiskVersion` |
 | `open_document` | 已授权 file token | 文本、编码、换行元数据、文件状态 |
 | `choose_workspace` | 原生选择 | 工作空间 token 和根节点 |
