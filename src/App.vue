@@ -24,6 +24,7 @@ import { RenderScheduler, type RenderResult } from './services/markdown-renderer
 import { SourceMapService } from './services/source-map'
 import { PreviewScroll } from './services/preview-scroll'
 import { DocumentStatsScheduler, type DocumentStats } from './services/document-stats'
+import { SaveCoordinator, type SaveStatus } from './services/save-coordinator'
 import { createFileIpc, type OpenDocument, type TauriInvoke } from './types/ipc'
 
 type NavTab = 'files' | 'search' | 'outline'
@@ -42,6 +43,7 @@ type DocumentTab = {
   identity?: OpenDocument['identity']
   metadata?: OpenDocument['metadata']
   readOnly?: boolean
+  diskVersion?: OpenDocument['diskVersion']
 }
 
 const desktopInvoke = (
@@ -76,6 +78,17 @@ const previewFrame = useTemplateRef('previewFrame')
 const currentStats = ref<DocumentStats | undefined>()
 const statsPending = ref(false)
 const cursorPosition = ref({ line: 1, column: 1 })
+const saveStates = ref<Record<string, SaveStatus>>({})
+const saveErrors = ref<Record<string, string>>({})
+const saveCoordinator = new SaveCoordinator((documentId, status, error) => {
+  saveStates.value = { ...saveStates.value, [documentId]: status }
+  if (error) {
+    saveErrors.value = {
+      ...saveErrors.value,
+      [documentId]: describeSaveError(error),
+    }
+  }
+})
 let previewResult: Pick<RenderResult, 'documentId' | 'revision' | 'html' | 'blocks'> | undefined
 const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
   const tab = tabs.value.find((item) => item.id === id)
@@ -86,6 +99,7 @@ const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
     source: editorRegistry.getText(id),
   })
   scheduleStats(id)
+  scheduleDocumentSave(id)
 })
 const activeNav = ref<NavTab>('files')
 const activeTab = ref<string | null>(persisted.session.activeDocument)
@@ -107,6 +121,9 @@ for (const tab of tabs.value) {
 }
 const stopCursorSubscription = editorRegistry.subscribeCursor((id) => {
   if (id === activeTab.value) cursorPosition.value = editorRegistry.cursorPosition(id)
+})
+const stopCompositionSubscription = editorRegistry.subscribeComposition((id, composing) => {
+  saveCoordinator.setComposing(id, composing)
 })
 const stopStatsSubscription = statsScheduler.subscribe((event) => {
   if (
@@ -156,7 +173,14 @@ const activeDocument = computed(() => tabs.value.find((tab) => tab.id === active
 const saveStatus = computed(() => {
   const tab = activeDocument.value
   if (!tab) return ''
-  return tab.modified || tab.id.startsWith('untitled-') ? '未保存' : '已保存'
+  if (tab.id.startsWith('untitled-') && !tab.token) return '未保存'
+  if (tab.readOnly) return '只读'
+  const status = saveStates.value[tab.id]
+  if (status === 'waiting') return '等待保存'
+  if (status === 'saving') return '正在保存…'
+  if (status === 'error') return '保存失败'
+  if (status === 'conflict') return '文件冲突'
+  return tab.modified ? '待保存' : '已保存'
 })
 
 const isNarrow = computed(() => viewportWidth.value - navWidth.value < 640)
@@ -194,6 +218,109 @@ function scheduleStats(id: string) {
     revision: editorRegistry.get(id)?.revision ?? 0,
     source: editorRegistry.getText(id),
   })
+}
+
+function scheduleDocumentSave(id: string) {
+  const request = buildSaveRequest(id)
+  if (request) saveCoordinator.schedule(request)
+}
+
+function describeSaveError(error: unknown) {
+  const payload = error as { code?: string; message?: string }
+  if (payload?.code === 'CONFLICT' || payload?.code === 'CONFLICT_DURING_COMMIT')
+    return '磁盘文件已变化，已暂停自动保存；请另存为以保留当前编辑'
+  if (payload?.code === 'READ_ONLY') return '文件为只读状态，当前编辑仍保留在内存中'
+  if (payload?.code === 'DISK_FULL') return '磁盘空间不足，当前编辑仍保留在内存中'
+  if (payload?.code === 'FILE_BUSY') return '文件正被其他程序占用，可重试或另存为'
+  return payload?.message ?? '保存失败，当前编辑仍保留在内存中'
+}
+
+async function saveDocument(id: string, manual = false) {
+  const tab = tabs.value.find((item) => item.id === id)
+  if (!tab) return
+  const session = editorRegistry.get(id)
+  if (!session || !editorRegistry.isDirty(id)) return
+  if (!tab.token || !tab.metadata || !tab.diskVersion) {
+    await saveDocumentAs(id)
+    return
+  }
+  if (tab.readOnly) {
+    lastCommand.value = '文件为只读状态，请使用另存为'
+    return
+  }
+  const request = buildSaveRequest(id)
+  if (!request) return
+  if (manual) await saveCoordinator.saveNow(request)
+  else saveCoordinator.schedule(request)
+}
+
+function buildSaveRequest(id: string) {
+  const tab = tabs.value.find((item) => item.id === id)
+  const session = editorRegistry.get(id)
+  if (!tab?.token || !tab.metadata || !tab.diskVersion || !session) return undefined
+  const revision = session.revision
+  const text = editorRegistry.getText(id)
+  return {
+    documentId: id,
+    revision,
+    save: async () => {
+      if (!fileIpc || !tab.token || !tab.metadata || !tab.diskVersion)
+        throw new Error('桌面文件保存服务不可用')
+      const result = await fileIpc.saveDocument(
+        tab.token,
+        text,
+        tab.metadata,
+        revision,
+        tab.diskVersion,
+      )
+      tab.diskVersion = result.diskVersion
+      tab.identity = result.identity
+    },
+    onSaved: () => {
+      editorRegistry.markSaved(id, text)
+      tab.modified = editorRegistry.isDirty(id)
+      delete saveErrors.value[id]
+    },
+    onError: (error: unknown) => {
+      saveErrors.value = { ...saveErrors.value, [id]: describeSaveError(error) }
+    },
+  }
+}
+
+async function saveDocumentAs(id: string) {
+  const tab = tabs.value.find((item) => item.id === id)
+  const session = editorRegistry.get(id)
+  if (!tab || !session || !fileIpc) {
+    lastCommand.value = '另存为仅在桌面应用中可用'
+    return
+  }
+  const text = editorRegistry.getText(id)
+  try {
+    const saved = await fileIpc.saveDocumentAs(
+      text,
+      tab.metadata ?? { bom: false, lineEndings: [], trailingNewline: false },
+      session.revision,
+    )
+    if (!saved) return
+    tab.token = saved.token
+    tab.label = saved.name
+    tab.displayPath = saved.displayPath
+    tab.identity = saved.identity
+    tab.metadata = saved.metadata
+    tab.diskVersion = saved.diskVersion
+    tab.readOnly = saved.readOnly
+    editorRegistry.markSaved(id, text)
+    tab.modified = editorRegistry.isDirty(id)
+    saveStates.value = { ...saveStates.value, [id]: 'saved' }
+  } catch (error) {
+    saveErrors.value = { ...saveErrors.value, [id]: describeSaveError(error) }
+    saveStates.value = { ...saveStates.value, [id]: 'error' }
+  }
+}
+
+async function saveAllDocuments() {
+  const dirtyTabs = tabs.value.filter((tab) => tab.modified && !tab.readOnly)
+  await Promise.all(dirtyTabs.map((tab) => saveDocument(tab.id, true)))
 }
 
 function handlePreviewClick(event: MouseEvent) {
@@ -390,6 +517,15 @@ function dispatchCommand(id: CommandId) {
     case 'file.open':
       void chooseAndOpenDocuments()
       break
+    case 'file.save':
+      if (activeTab.value) void saveDocument(activeTab.value, true)
+      break
+    case 'file.saveAll':
+      void saveAllDocuments()
+      break
+    case 'file.saveAs':
+      if (activeTab.value) void saveDocumentAs(activeTab.value)
+      break
     case 'view.navigation':
       toggleNav()
       break
@@ -539,8 +675,11 @@ function openAuthorizedDocument(document: OpenDocument) {
   if (existing) {
     existing.token = document.token
     existing.displayPath = document.displayPath
-    existing.metadata = document.metadata
-    existing.readOnly = document.readOnly
+    if (!existing.modified) {
+      existing.metadata = document.metadata
+      existing.readOnly = document.readOnly
+      existing.diskVersion = document.diskVersion
+    }
     activeTab.value = existing.id
     return
   }
@@ -554,6 +693,7 @@ function openAuthorizedDocument(document: OpenDocument) {
     identity: document.identity,
     metadata: document.metadata,
     readOnly: document.readOnly,
+    diskVersion: document.diskVersion,
   })
   editorRegistry.register(id, document.text, document.text, document.readOnly)
   activeTab.value = id
@@ -655,8 +795,10 @@ onBeforeUnmount(() => {
   stopCursorSubscription()
   stopStatsSubscription()
   stopRenderSubscription()
+  stopCompositionSubscription()
   renderScheduler.dispose()
   statsScheduler.dispose()
+  saveCoordinator.dispose()
   previewScroll.dispose()
   editorRegistry.destroy()
   resizeObserver?.disconnect()
@@ -712,7 +854,10 @@ onBeforeUnmount(() => {
           navCollapsed ? '显示导航' : '隐藏导航'
         }}</UiButton>
         <UiButton
-          :disabled="!commandEnabled(commands.find((command) => command.id === 'file.save')!)"
+          :disabled="
+            !commandEnabled(commands.find((command) => command.id === 'file.save')!) ||
+            activeDocument?.readOnly
+          "
           @click="dispatchCommand('file.save')"
           >保存</UiButton
         >
@@ -926,6 +1071,17 @@ onBeforeUnmount(() => {
         <header class="pane-header">
           <span id="source-title">源码</span><span class="pane-hint">Markdown</span>
         </header>
+        <div v-if="activeDocument && saveErrors[activeDocument.id]" class="save-error" role="alert">
+          <span>{{ saveErrors[activeDocument.id] }}</span>
+          <button
+            v-if="saveStates[activeDocument.id] !== 'conflict'"
+            type="button"
+            @click="saveDocument(activeDocument.id, true)"
+          >
+            重试
+          </button>
+          <button type="button" @click="saveDocumentAs(activeDocument.id)">另存为</button>
+        </div>
         <MarkdownEditor
           :registry="editorRegistry"
           :document-id="activeTab"

@@ -1,11 +1,21 @@
 use serde::{Deserialize, Serialize};
+#[cfg(not(windows))]
+use std::io::Read;
 use std::{
     collections::HashMap,
     fs::{self, File},
-    io::Read,
     path::{Component, Path, PathBuf},
 };
 use uuid::Uuid;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskVersion {
+    pub file_id: String,
+    pub hash: String,
+    pub length: u64,
+    pub modified: u64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AuthorizationToken(Uuid);
@@ -92,6 +102,7 @@ pub enum ErrorCode {
     AlreadyExists,
     UnsupportedEncoding,
     ReadOnly,
+    SaveFailed,
     DiskFull,
     FileBusy,
     Conflict,
@@ -137,6 +148,15 @@ pub struct OpenDocument {
     pub text: String,
     pub metadata: TextMetadata,
     pub read_only: bool,
+    pub disk_version: DiskVersion,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveResult {
+    pub revision: u64,
+    pub identity: FileIdentity,
+    pub disk_version: DiskVersion,
 }
 
 pub fn decode_document(bytes: &[u8]) -> Result<(String, TextMetadata), IpcError> {
@@ -363,7 +383,7 @@ impl AuthorizationRegistry {
                 "The authorized entry has changed",
             ));
         }
-        let mut file = File::open(&grant.canonical_path).map_err(IpcError::from_io)?;
+        let file = File::open(&grant.canonical_path).map_err(IpcError::from_io)?;
         if file_identity(&file).map_err(IpcError::from_io)? != grant.identity {
             return Err(IpcError::new(
                 ErrorCode::PathOutOfScope,
@@ -375,8 +395,8 @@ impl AuthorizationRegistry {
             .map_err(IpcError::from_io)?
             .permissions()
             .readonly();
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(IpcError::from_io)?;
+        let (disk_version, bytes) =
+            snapshot_document(&grant.canonical_path, &file, &grant.identity)?;
         let (text, metadata) = decode_document(&bytes)?;
         Ok(OpenDocument {
             token,
@@ -391,8 +411,216 @@ impl AuthorizationRegistry {
             text,
             metadata,
             read_only,
+            disk_version,
         })
     }
+
+    #[cfg(windows)]
+    pub fn save_document(
+        &mut self,
+        token: AuthorizationToken,
+        text: &str,
+        metadata: &TextMetadata,
+        revision: u64,
+        expected: &DiskVersion,
+    ) -> Result<SaveResult, IpcError> {
+        let grant = self.grants.get_mut(&token).ok_or_else(|| {
+            IpcError::new(ErrorCode::InvalidToken, "Authorization token is invalid")
+        })?;
+        if !matches!(grant.kind, GrantKind::File) {
+            return Err(IpcError::new(
+                ErrorCode::PathOutOfScope,
+                "A directory token cannot save a document",
+            ));
+        }
+        let current = open_entry(&grant.canonical_path).map_err(IpcError::from_io)?;
+        if current.identity != grant.identity {
+            return Err(IpcError::new(
+                ErrorCode::Conflict,
+                "The authorized file identity has changed",
+            ));
+        }
+        let (actual, _) = crate::prototypes::safe_save::snapshot(&grant.canonical_path)
+            .map_err(|error| map_save_io_error(error, "The file could not be inspected"))?;
+        if &actual != expected {
+            return Err(IpcError::new(
+                ErrorCode::Conflict,
+                "The file changed on disk since it was opened",
+            ));
+        }
+        let encoded = encode_document(text, metadata);
+        let receipt = crate::prototypes::safe_save::save_with_hook(
+            &grant.canonical_path,
+            Some(expected),
+            &encoded,
+            |_| Ok(()),
+        )
+        .map_err(map_save_failure)?;
+        let entry = open_entry(&grant.canonical_path).map_err(IpcError::from_io)?;
+        grant.identity = entry.identity.clone();
+        Ok(SaveResult {
+            revision,
+            identity: entry.identity,
+            disk_version: receipt.version,
+        })
+    }
+
+    #[cfg(windows)]
+    pub fn save_new_document(
+        &mut self,
+        path: &Path,
+        text: &str,
+        metadata: &TextMetadata,
+    ) -> Result<OpenDocument, IpcError> {
+        validate_selected_path(path)?;
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| IpcError::new(ErrorCode::InvalidName, "The filename is invalid"))?;
+        validate_name(name)?;
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let mut target = path.to_path_buf();
+        if extension.is_empty() {
+            target.set_extension("md");
+        } else if !extension.eq_ignore_ascii_case("md")
+            && !extension.eq_ignore_ascii_case("markdown")
+        {
+            return Err(IpcError::new(
+                ErrorCode::InvalidName,
+                "Save Markdown documents with a .md or .markdown extension",
+            ));
+        }
+        let target_name = target
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| IpcError::new(ErrorCode::InvalidName, "The filename is invalid"))?;
+        validate_name(target_name)?;
+        if target.exists() {
+            return Err(IpcError::new(
+                ErrorCode::AlreadyExists,
+                "The target already exists; it was not overwritten",
+            ));
+        }
+        let encoded = encode_document(text, metadata);
+        let receipt =
+            crate::prototypes::safe_save::save_with_hook(&target, None, &encoded, |_| Ok(()))
+                .map_err(map_save_failure)?;
+        let token = self.authorize_file(&target)?;
+        let mut document = self.read_document(token)?;
+        document.disk_version = receipt.version;
+        Ok(document)
+    }
+}
+
+fn snapshot_document(
+    path: &Path,
+    _file: &File,
+    identity: &FileIdentity,
+) -> Result<(DiskVersion, Vec<u8>), IpcError> {
+    #[cfg(windows)]
+    {
+        let (version, bytes) = crate::prototypes::safe_save::snapshot(path)
+            .map_err(|error| map_save_io_error(error, "The file could not be read"))?;
+        if disk_file_identity(&version.file_id)? != *identity {
+            return Err(IpcError::new(
+                ErrorCode::PathOutOfScope,
+                "The authorized entry has changed",
+            ));
+        }
+        Ok((version, bytes))
+    }
+    #[cfg(not(windows))]
+    {
+        let mut file = _file;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map_err(IpcError::from_io)?;
+        let modified = file
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_nanos() as u64)
+            .unwrap_or_default();
+        Ok((
+            DiskVersion {
+                file_id: format!("{}:{}", identity.volume, identity.index),
+                hash: blake3::hash(&bytes).to_hex().to_string(),
+                length: bytes.len() as u64,
+                modified,
+            },
+            bytes,
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn disk_file_identity(file_id: &str) -> Result<FileIdentity, IpcError> {
+    let mut parts = file_id.split(':');
+    let volume = parts
+        .next()
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| IpcError::new(ErrorCode::Conflict, "The disk identity is invalid"))?;
+    let high = parts
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or_else(|| IpcError::new(ErrorCode::Conflict, "The disk identity is invalid"))?;
+    let low = parts
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .ok_or_else(|| IpcError::new(ErrorCode::Conflict, "The disk identity is invalid"))?;
+    if parts.next().is_some() {
+        return Err(IpcError::new(
+            ErrorCode::Conflict,
+            "The disk identity is invalid",
+        ));
+    }
+    Ok(FileIdentity {
+        volume,
+        index: format!("{high:08x}{low:08x}"),
+    })
+}
+
+#[cfg(windows)]
+fn map_save_io_error(error: std::io::Error, message: &str) -> IpcError {
+    let code = match error.kind() {
+        std::io::ErrorKind::NotFound => ErrorCode::NotFound,
+        std::io::ErrorKind::PermissionDenied => ErrorCode::PermissionDenied,
+        _ if error.raw_os_error() == Some(112) => ErrorCode::DiskFull,
+        _ if matches!(error.raw_os_error(), Some(32 | 33)) => ErrorCode::FileBusy,
+        _ => ErrorCode::SaveFailed,
+    };
+    IpcError::new(code, message)
+}
+
+#[cfg(windows)]
+fn map_save_failure(failure: crate::prototypes::safe_save::SaveFailure) -> IpcError {
+    let code = match failure.code {
+        "CONFLICT" => ErrorCode::Conflict,
+        "CONFLICT_DURING_COMMIT" => ErrorCode::ConflictDuringCommit,
+        _ => failure
+            .cause
+            .map(|error| map_save_io_error(error, "The file could not be saved").code)
+            .unwrap_or(ErrorCode::SaveFailed),
+    };
+    let mut result = IpcError::new(code, "The file could not be saved safely");
+    result.retryable = matches!(
+        code,
+        ErrorCode::DiskFull | ErrorCode::FileBusy | ErrorCode::SaveFailed
+    );
+    if let Some(recovery) = failure.recovery {
+        result.details = Some(serde_json::json!({ "recoveryAvailable": true }));
+        result.operation_id = Some(
+            recovery
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into(),
+        );
+    }
+    result
 }
 
 pub fn validate_name(name: &str) -> Result<(), IpcError> {
@@ -735,6 +963,11 @@ mod tests {
             vec![LineEnding::CrLf, LineEnding::Lf]
         );
         assert_eq!(encode_document(&document.text, &document.metadata), bytes);
+        assert_eq!(document.disk_version.length, bytes.len() as u64);
+        assert_eq!(
+            document.disk_version.hash,
+            blake3::hash(bytes).to_hex().to_string()
+        );
     }
 
     #[test]

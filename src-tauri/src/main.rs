@@ -11,7 +11,9 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             ipc::inspect_authorized_entry,
             ipc::choose_and_open_documents,
-            ipc::open_document
+            ipc::open_document,
+            ipc::save_document,
+            ipc::save_document_as
         ])
         .run(tauri::generate_context!())
         .expect("无法启动 Markdown Studio");

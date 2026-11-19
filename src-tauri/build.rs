@@ -4,6 +4,8 @@ fn main() {
             "inspect_authorized_entry",
             "choose_and_open_documents",
             "open_document",
+            "save_document",
+            "save_document_as",
         ]));
     tauri_build::try_build(attributes).expect("failed to build Tauri ACL");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

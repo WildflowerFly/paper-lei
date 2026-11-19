@@ -6,6 +6,9 @@
     "allow-inspect-authorized-entry",
     "allow-choose-and-open-documents",
     "allow-open-document",
-    "dialog:allow-open"
+    "allow-save-document",
+    "allow-save-document-as",
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }

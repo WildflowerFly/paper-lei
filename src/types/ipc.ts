@@ -17,6 +17,7 @@ export type IpcErrorCode =
   | 'EXPORT_FAILED'
   | 'CANCELLED'
   | 'INVALID_TOKEN'
+  | 'SAVE_FAILED'
 
 export interface IpcError {
   code: IpcErrorCode
@@ -53,6 +54,28 @@ export interface OpenDocument {
   text: string
   metadata: TextMetadata
   readOnly: boolean
+  diskVersion: DiskVersion
+}
+
+export interface DiskVersion {
+  fileId: string
+  hash: string
+  length: number
+  modified: number
+}
+
+export interface SaveDocumentRequest {
+  token: AuthorizationToken
+  text: string
+  metadata: TextMetadata
+  revision: number
+  expectedDiskVersion: DiskVersion
+}
+
+export interface SaveResult {
+  revision: number
+  identity: FileIdentity
+  diskVersion: DiskVersion
 }
 
 export type TauriInvoke = <Result>(
@@ -73,6 +96,28 @@ export function createFileIpc(invoke: TauriInvoke) {
     },
     openDocument(token: AuthorizationToken): Promise<OpenDocument> {
       return invoke<OpenDocument>('open_document', { token })
+    },
+    saveDocument(
+      token: AuthorizationToken,
+      text: string,
+      metadata: TextMetadata,
+      revision: number,
+      expectedDiskVersion: DiskVersion,
+    ): Promise<SaveResult> {
+      return invoke<SaveResult>('save_document', {
+        token,
+        text,
+        metadata,
+        revision,
+        expectedDiskVersion,
+      })
+    },
+    saveDocumentAs(
+      text: string,
+      metadata: TextMetadata,
+      revision: number,
+    ): Promise<OpenDocument | null> {
+      return invoke<OpenDocument | null>('save_document_as', { text, metadata, revision })
     },
   }
 }

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+pub use super::authorization::DiskVersion;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
@@ -10,14 +10,6 @@ use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, GetDriveTypeW, GetFileInformationByHandle, GetVolumeInformationW,
     GetVolumePathNameW, MoveFileExW, ReplaceFileW,
 };
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DiskVersion {
-    pub file_id: String,
-    pub hash: String,
-    pub length: u64,
-    pub modified: u64,
-}
 
 #[derive(Debug)]
 pub struct SaveFailure {

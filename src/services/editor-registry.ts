@@ -96,6 +96,7 @@ export class EditorRegistry {
   private readonly listeners = new Set<(change: EditorChange) => void>()
   private readonly scrollListeners = new Set<(id: string) => void>()
   private readonly cursorListeners = new Set<(id: string) => void>()
+  private readonly compositionListeners = new Set<(id: string, composing: boolean) => void>()
 
   subscribe(listener: (change: EditorChange) => void) {
     this.listeners.add(listener)
@@ -110,6 +111,11 @@ export class EditorRegistry {
   subscribeCursor(listener: (id: string) => void) {
     this.cursorListeners.add(listener)
     return () => this.cursorListeners.delete(listener)
+  }
+
+  subscribeComposition(listener: (id: string, composing: boolean) => void) {
+    this.compositionListeners.add(listener)
+    return () => this.compositionListeners.delete(listener)
   }
 
   cursorPosition(id: string) {
@@ -158,9 +164,9 @@ export class EditorRegistry {
     return session ? session.state.doc.toString() !== session.savedText : false
   }
 
-  markSaved(id: string) {
+  markSaved(id: string, savedText = this.require(id).state.doc.toString()) {
     const session = this.require(id)
-    session.savedText = session.state.doc.toString()
+    session.savedText = savedText
   }
 
   dispatch(id: string, spec: TransactionSpec) {
@@ -285,7 +291,12 @@ export class EditorRegistry {
         EditorState.readOnly.of(readOnly),
         EditorState.changeFilter.of((transaction) => !readOnly || !transaction.docChanged),
         EditorView.domEventHandlers({
+          compositionstart: () => {
+            for (const listener of this.compositionListeners) listener(id, true)
+            return false
+          },
           compositionend: () => {
+            for (const listener of this.compositionListeners) listener(id, false)
             return false
           },
         }),
