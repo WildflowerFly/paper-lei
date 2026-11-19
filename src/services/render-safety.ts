@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify'
+import markdownStyles from '../styles/markdown.css?inline'
 
 const rawTags = [
   'h1',
@@ -34,12 +35,24 @@ const rawTags = [
   'kbd',
   'span',
   'div',
+  'section',
+  'input',
 ]
 
-export function sanitizeRawHtml(html: string): string {
+export function sanitizeRawHtml(html: string, allowGeneratedAttributes = false): string {
+  const allowedAttributes = [
+    'title',
+    'colspan',
+    'rowspan',
+    'start',
+    'href',
+    ...(allowGeneratedAttributes
+      ? ['class', 'id', 'aria-label', 'aria-hidden', 'checked', 'disabled', 'type']
+      : []),
+  ]
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS: rawTags,
-    ALLOWED_ATTR: ['title', 'colspan', 'rowspan', 'start'],
+    ALLOWED_ATTR: allowedAttributes,
     ALLOW_DATA_ATTR: false,
     ALLOW_ARIA_ATTR: false,
     SANITIZE_NAMED_PROPS: true,
@@ -106,8 +119,12 @@ export function sanitizeDiagram(svg: string): string {
 export const previewCsp =
   "default-src 'none'; script-src 'none'; connect-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src 'none'; base-uri 'none'; form-action 'none'"
 
-export function createPreviewDocument(safeBody: string): string {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${previewCsp}"></head><body><article class="markdown-body">${safeBody}</article></body></html>`
+export function createPreviewDocument(
+  safeBody: string,
+  theme: 'light' | 'dark' | 'system' = 'system',
+): string {
+  const themeAttribute = theme === 'system' ? '' : ` data-theme="${theme}"`
+  return `<!doctype html><html lang="zh-CN"${themeAttribute}><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${previewCsp}"><style>${markdownStyles}</style></head><body><article class="markdown-body">${safeBody}</article></body></html>`
 }
 
 export function attachPreview(frame: HTMLIFrameElement, safeBody: string): void {

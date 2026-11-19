@@ -79,7 +79,7 @@ const stopRenderSubscription = renderScheduler.subscribe((result) => {
   if (result.documentId !== activeTab.value) return
   previewHtml.value = renderScheduler.sanitize(result.html)
   if (previewFrame.value) {
-    previewFrame.value.srcdoc = createPreviewDocument(previewHtml.value)
+    previewFrame.value.srcdoc = createPreviewDocument(previewHtml.value, themePreference.value)
   }
 })
 const openMenu = ref<CommandMenu | null>(null)
@@ -325,6 +325,11 @@ watch(
   { deep: true, flush: 'post' },
 )
 watch(activeTab, scheduleActiveRender, { flush: 'post' })
+watch(themePreference, () => {
+  if (previewFrame.value) {
+    previewFrame.value.srcdoc = createPreviewDocument(previewHtml.value, themePreference.value)
+  }
+})
 watch(recentFiles, () => settingsStore.setRecent(recentFiles.value), { deep: true, flush: 'post' })
 watch(favoriteFiles, () => settingsStore.setFavorites(favoriteFiles.value), {
   deep: true,
@@ -656,7 +661,7 @@ onBeforeUnmount(() => {
           class="preview-frame"
           title="隔离的 Markdown 预览"
           sandbox="allow-same-origin"
-          :srcdoc="createPreviewDocument(previewHtml)"
+          :srcdoc="createPreviewDocument(previewHtml, themePreference)"
         />
       </section>
       <div

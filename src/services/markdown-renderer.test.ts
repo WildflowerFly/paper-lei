@@ -4,7 +4,7 @@ import { renderMarkdown, RenderScheduler } from './markdown-renderer'
 describe('markdown renderer', () => {
   it('renders Markdown and returns source line ranges', () => {
     const result = renderMarkdown('# 标题\n\n正文 **加粗**')
-    expect(result.html).toContain('<h1>标题</h1>')
+    expect(result.html).toContain('<h1 id="标题">')
     expect(result.html).toContain('<strong>加粗</strong>')
     expect(result.blocks[0]).toMatchObject({ fromLine: 0, toLineExclusive: 1 })
     expect(result.blocks[1]).toMatchObject({ fromLine: 2, toLineExclusive: 3 })
@@ -14,6 +14,18 @@ describe('markdown renderer', () => {
     const result = renderMarkdown('a\nb\n\n| a | b |\n| - | - |\n| 1 | 2 |')
     expect(result.html).toContain('a\nb')
     expect(result.html).toContain('<table>')
+  })
+
+  it('renders task lists, footnotes, links and deterministic heading anchors', () => {
+    const result = renderMarkdown(
+      '# Release notes\n\n## Release notes\n\n- [ ] Pending\n- [x] Done\n\nSee [docs](https://example.com).[^1]\n\n[^1]: Reference',
+    )
+    expect(result.html).toContain('id="release-notes"')
+    expect(result.html).toContain('id="release-notes-2"')
+    expect(result.html).toContain('task-list-item-checkbox')
+    expect(result.html).toContain('disabled=""')
+    expect(result.html).toContain('class="footnotes"')
+    expect(result.html).toContain('href="https://example.com"')
   })
 })
 

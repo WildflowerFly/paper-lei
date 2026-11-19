@@ -114,9 +114,10 @@ PRD 的七个开发阶段保留核心顺序；本清单将早期风险验证和�
   - 验收：输入后自动更新，无需预览按钮；旧文档或旧 revision 结果不会覆盖当前视图；危险 HTML 在首次渲染即被过滤。对应 AT-03、AT-04。
   - 证据：[Markdown 基础解析与调度验收记录](./verification/EDT-02.md)，解析调度单测与实时预览专项 Playwright 测试通过。
 
-- [ ] **EDT-03：实现 GitHub 风格 Markdown 样式与 GFM** — P0 / M；依赖：EDT-02、UI-01。
+- [x] **EDT-03：实现 GitHub 风格 Markdown 样式与 GFM** — P0 / M；依赖：EDT-02、UI-01。
   - 产出：隔离的 `.markdown-body` 样式，标题、列表、引用、表格、任务列表、删除线、自动链接、脚注及锚点。
   - 验收：浅深主题的 showcase 截图基线覆盖全部元素；普通单换行语义正确；任务列表只读；宽表格/长代码不撑宽应用。对应 AT-04、UX-03/04。
+  - 证据：[GitHub 风格 Markdown 与 GFM 验收记录](./verification/EDT-03.md)，浅色/深色 showcase 截图、解析单测与专项 Playwright 测试通过。
 
 - [ ] **EDT-04：实现块级源码映射与预览点击定位** — P0 / M；依赖：EDT-02。
   - 产出：SourceMapService、受控 blockId、复杂节点回退、点击过滤与行高亮。

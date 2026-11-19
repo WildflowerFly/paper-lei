@@ -1,4 +1,6 @@
-import MarkdownIt from 'markdown-it'
+import MarkdownIt, { type MarkdownIt as MarkdownItInstance, type Token } from 'markdown-it'
+import footnote from 'markdown-it-footnote'
+import taskLists from 'markdown-it-task-lists'
 import { sanitizeRawHtml } from './render-safety'
 
 export type SourceBlock = {
@@ -28,9 +30,54 @@ const markdown = new MarkdownIt({
   breaks: false,
   typographer: false,
 })
+  .use(footnote as unknown as (md: MarkdownItInstance) => void)
+  .use(taskLists as unknown as (md: MarkdownItInstance, options: { enabled: boolean }) => void, {
+    enabled: false,
+  })
+
+function slugifyHeading(value: string, used: Set<string>) {
+  const base =
+    value
+      .trim()
+      .toLocaleLowerCase()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^\p{Letter}\p{Number}\s-]/gu, '')
+      .trim()
+      .replace(/\s+/g, '-') || 'section'
+  let slug = base
+  let suffix = 2
+  while (used.has(slug)) slug = `${base}-${suffix++}`
+  used.add(slug)
+  return slug
+}
+
+function addHeadingAnchors(tokens: Token[]) {
+  const used = new Set<string>()
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    const heading = tokens[index]
+    const inline = tokens[index + 1]
+    if (!heading || !inline || heading.type !== 'heading_open' || inline.type !== 'inline') continue
+    const slug = slugifyHeading(inline.content, used)
+    heading.attrSet('id', slug)
+  }
+}
+
+markdown.renderer.rules.heading_open = (tokens, index, options, _env, slf) => {
+  const token = tokens[index]
+  if (!token) return ''
+  const id = token.attrGet('id')
+  const opening = slf.renderToken(tokens, index, options)
+  if (!id) return opening
+  return `${opening}<a class="heading-anchor" href="#${id}" aria-label="链接到本节"></a>`
+}
+
+markdown.renderer.rules.table_open = () => '<div class="table-scroll"><table>'
+markdown.renderer.rules.table_close = () => '</table></div>'
 
 export function renderMarkdown(source: string): RawRenderResult {
   const tokens = markdown.parse(source, {})
+  addHeadingAnchors(tokens)
   const blocks: SourceBlock[] = []
   let blockIndex = 0
   for (const token of tokens) {
@@ -54,7 +101,7 @@ export function renderMarkdown(source: string): RawRenderResult {
       kind: token.type,
     })
   }
-  return { html: markdown.render(source), blocks }
+  return { html: markdown.renderer.render(tokens, markdown.options, {}), blocks }
 }
 
 type WorkerMessage = { id: number; source: string }
@@ -151,7 +198,7 @@ export class RenderScheduler {
   }
 
   sanitize(html: string) {
-    return sanitizeRawHtml(html)
+    return sanitizeRawHtml(html, true)
   }
 
   dispose() {
