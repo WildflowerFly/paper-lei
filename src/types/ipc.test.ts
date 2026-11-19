@@ -19,4 +19,16 @@ describe('file IPC contract', () => {
       relativePath: 'notes/我的 文件.md',
     })
   })
+
+  it('keeps document opening behind typed token commands', async () => {
+    const invoke = vi.fn().mockResolvedValue([])
+    const ipc = createFileIpc(invoke)
+
+    await ipc.chooseAndOpenDocuments()
+    expect(invoke).toHaveBeenCalledWith('choose_and_open_documents')
+    await ipc.openDocument('a3fe5ac0-2433-4ed9-8ab7-e0e14ebcc326' as AuthorizationToken)
+    expect(invoke).toHaveBeenCalledWith('open_document', {
+      token: 'a3fe5ac0-2433-4ed9-8ab7-e0e14ebcc326',
+    })
+  })
 })

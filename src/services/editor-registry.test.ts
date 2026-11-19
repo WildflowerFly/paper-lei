@@ -51,4 +51,12 @@ describe('EditorRegistry', () => {
       'Unknown editor document',
     )
   })
+
+  it('keeps read-only documents from accepting edits', () => {
+    const registry = new EditorRegistry()
+    registry.register('readonly', 'locked', 'locked', true)
+    registry.dispatch('readonly', { changes: { from: 0, insert: 'x' } })
+    expect(registry.getText('readonly')).toBe('locked')
+    expect(registry.get('readonly')?.revision).toBe(0)
+  })
 })

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-choose-and-open-documents"
+description = "Enables the choose_and_open_documents command without any pre-configured scope."
+commands.allow = ["choose_and_open_documents"]
+
+[[permission]]
+identifier = "deny-choose-and-open-documents"
+description = "Denies the choose_and_open_documents command without any pre-configured scope."
+commands.deny = ["choose_and_open_documents"]

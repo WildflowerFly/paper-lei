@@ -37,6 +37,24 @@ export interface EntryInspection {
   identity: FileIdentity
 }
 
+export type LineEnding = 'lf' | 'cr_lf' | 'cr'
+
+export interface TextMetadata {
+  bom: boolean
+  lineEndings: LineEnding[]
+  trailingNewline: boolean
+}
+
+export interface OpenDocument {
+  token: AuthorizationToken
+  name: string
+  displayPath: string
+  identity: FileIdentity
+  text: string
+  metadata: TextMetadata
+  readOnly: boolean
+}
+
 export type TauriInvoke = <Result>(
   command: string,
   arguments_?: Record<string, unknown>,
@@ -49,6 +67,12 @@ export function createFileIpc(invoke: TauriInvoke) {
       relativePath: string,
     ): Promise<EntryInspection> {
       return invoke<EntryInspection>('inspect_authorized_entry', { token, relativePath })
+    },
+    chooseAndOpenDocuments(): Promise<OpenDocument[]> {
+      return invoke<OpenDocument[]>('choose_and_open_documents')
+    },
+    openDocument(token: AuthorizationToken): Promise<OpenDocument> {
+      return invoke<OpenDocument>('open_document', { token })
     },
   }
 }

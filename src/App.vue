@@ -24,6 +24,7 @@ import { RenderScheduler, type RenderResult } from './services/markdown-renderer
 import { SourceMapService } from './services/source-map'
 import { PreviewScroll } from './services/preview-scroll'
 import { DocumentStatsScheduler, type DocumentStats } from './services/document-stats'
+import { createFileIpc, type OpenDocument, type TauriInvoke } from './types/ipc'
 
 type NavTab = 'files' | 'search' | 'outline'
 type FileEntry = {
@@ -32,6 +33,23 @@ type FileEntry = {
   path: string
   state?: 'ready' | 'missing' | 'loading' | 'error'
 }
+type DocumentTab = {
+  id: string
+  label: string
+  modified: boolean
+  token?: OpenDocument['token']
+  displayPath?: string
+  identity?: OpenDocument['identity']
+  metadata?: OpenDocument['metadata']
+  readOnly?: boolean
+}
+
+const desktopInvoke = (
+  globalThis as typeof globalThis & {
+    __TAURI_INTERNALS__?: { invoke: TauriInvoke }
+  }
+).__TAURI_INTERNALS__?.invoke
+const fileIpc = desktopInvoke ? createFileIpc(desktopInvoke) : undefined
 
 const shell = useTemplateRef('shell')
 const central = useTemplateRef('central')
@@ -72,7 +90,7 @@ const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
 const activeNav = ref<NavTab>('files')
 const activeTab = ref<string | null>(persisted.session.activeDocument)
 const initialTabs = persisted.session.tabs.length ? persisted.session.tabs : ['readme', 'notes']
-const tabs = ref(
+const tabs = ref<DocumentTab[]>(
   initialTabs.map((id) => ({
     id,
     label: id === 'readme' ? 'README.md' : id === 'notes' ? 'notes.md' : `未命名 ${id}`,
@@ -369,6 +387,9 @@ function dispatchCommand(id: CommandId) {
   openMenu.value = null
   lastCommand.value = command.label
   switch (id) {
+    case 'file.open':
+      void chooseAndOpenDocuments()
+      break
     case 'view.navigation':
       toggleNav()
       break
@@ -493,6 +514,63 @@ watch(favoriteFiles, () => settingsStore.setFavorites(favoriteFiles.value), {
 function closeTab(tabId: string) {
   if (activeTab.value !== tabId) activeTab.value = tabId
   dispatchCommand('file.close')
+}
+
+async function chooseAndOpenDocuments() {
+  if (!fileIpc) {
+    lastCommand.value = '原生文件对话框仅在桌面应用中可用'
+    return
+  }
+  try {
+    const documents = await fileIpc.chooseAndOpenDocuments()
+    for (const document of documents) openAuthorizedDocument(document)
+    if (documents.length) lastCommand.value = `已打开 ${documents.length} 个文件`
+  } catch (error) {
+    lastCommand.value = describeOpenError(error)
+  }
+}
+
+function openAuthorizedDocument(document: OpenDocument) {
+  const existing = tabs.value.find(
+    (tab) =>
+      tab.identity?.volume === document.identity.volume &&
+      tab.identity.index === document.identity.index,
+  )
+  if (existing) {
+    existing.token = document.token
+    existing.displayPath = document.displayPath
+    existing.metadata = document.metadata
+    existing.readOnly = document.readOnly
+    activeTab.value = existing.id
+    return
+  }
+  const id = `file-${document.identity.volume}-${document.identity.index}`
+  tabs.value.push({
+    id,
+    label: document.name,
+    modified: false,
+    token: document.token,
+    displayPath: document.displayPath,
+    identity: document.identity,
+    metadata: document.metadata,
+    readOnly: document.readOnly,
+  })
+  editorRegistry.register(id, document.text, document.text, document.readOnly)
+  activeTab.value = id
+  if (!recentFiles.value.includes(document.displayPath)) {
+    recentFiles.value.unshift(document.displayPath)
+    recentFiles.value = recentFiles.value.slice(0, 50)
+  }
+}
+
+function describeOpenError(error: unknown) {
+  const payload = error as { code?: string; message?: string }
+  if (payload?.code === 'UNSUPPORTED_ENCODING') {
+    return '文件不是有效 UTF-8，已拒绝打开为可编辑文档'
+  }
+  if (payload?.code === 'PERMISSION_DENIED') return '没有权限读取此文件'
+  if (payload?.code === 'NOT_FOUND') return '文件已不存在或被移动'
+  return payload?.message ?? '打开文件失败'
 }
 
 function openFile(file: FileEntry) {
@@ -860,7 +938,7 @@ onBeforeUnmount(() => {
         <p>打开文件、新建文档，或从最近打开中继续。</p>
         <div class="empty-actions">
           <UiButton variant="primary" @click="dispatchCommand('file.new')">新建文档</UiButton
-          ><UiButton @click="activeNav = 'files'">打开文件</UiButton>
+          ><UiButton @click="chooseAndOpenDocuments">打开文件</UiButton>
         </div>
       </section>
     </section>

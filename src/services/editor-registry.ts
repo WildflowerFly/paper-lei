@@ -128,11 +128,11 @@ export class EditorRegistry {
     return { line: line.number, column }
   }
 
-  register(id: string, text: string, savedText = text) {
+  register(id: string, text: string, savedText = text, readOnly = false) {
     if (this.sessions.has(id)) return this.sessions.get(id)!
     const session: EditorSession = {
       id,
-      state: this.createState(id, text),
+      state: this.createState(id, text, readOnly),
       savedText,
       revision: 0,
       scrollTop: 0,
@@ -277,11 +277,13 @@ export class EditorRegistry {
     }
   }
 
-  private createState(id: string, text: string) {
+  private createState(id: string, text: string, readOnly: boolean) {
     return EditorState.create({
       doc: text,
       extensions: [
         baseExtensions,
+        EditorState.readOnly.of(readOnly),
+        EditorState.changeFilter.of((transaction) => !readOnly || !transaction.docChanged),
         EditorView.domEventHandlers({
           compositionend: () => {
             return false

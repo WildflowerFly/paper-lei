@@ -2,5 +2,10 @@
   "identifier": "main",
   "description": "启动窗口不需要文件、网络或系统命令权限。",
   "windows": ["main"],
-  "permissions": ["allow-inspect-authorized-entry"]
+  "permissions": [
+    "allow-inspect-authorized-entry",
+    "allow-choose-and-open-documents",
+    "allow-open-document",
+    "dialog:allow-open"
+  ]
 }
