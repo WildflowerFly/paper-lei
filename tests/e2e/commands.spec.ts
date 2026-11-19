@@ -29,5 +29,5 @@ test('dispatches the same view command from menu, toolbar and shortcut', async (
   await expect(page.locator('.workbench')).toHaveClass(/mode-split/)
   await page.keyboard.press('Control+B')
   await expect(page.locator('.app-shell')).toHaveClass(/nav-collapsed/)
-  await expect(page.getByRole('status')).toContainText('已执行：导航')
+  await expect(page.getByRole('status', { name: '命令反馈' })).toContainText('已执行：导航')
 })

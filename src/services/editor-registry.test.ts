@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest'
 import { EditorRegistry } from './editor-registry'
 
 describe('EditorRegistry', () => {
+  it('counts tabs, combining marks and joined emoji as single cursor columns', () => {
+    const registry = new EditorRegistry()
+    const line = '\t👩‍💻e\u0301'
+    registry.register('cursor', `first\n${line}`)
+    registry.dispatch('cursor', { selection: { anchor: 6 + line.length } })
+    expect(registry.cursorPosition('cursor')).toEqual({ line: 2, column: 4 })
+  })
+
   it('keeps independent text, revision and dirty state per document', () => {
     const registry = new EditorRegistry()
     registry.register('a', 'alpha')

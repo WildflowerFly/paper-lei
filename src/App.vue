@@ -23,6 +23,7 @@ import { createPreviewDocument } from './services/render-safety'
 import { RenderScheduler, type RenderResult } from './services/markdown-renderer'
 import { SourceMapService } from './services/source-map'
 import { PreviewScroll } from './services/preview-scroll'
+import { DocumentStatsScheduler, type DocumentStats } from './services/document-stats'
 
 type NavTab = 'files' | 'search' | 'outline'
 type FileEntry = {
@@ -49,10 +50,14 @@ const themePreference = ref<ThemePreference>(persisted.settings.theme)
 const settingsOpen = ref(false)
 const editorRegistry = new EditorRegistry()
 const renderScheduler = new RenderScheduler()
+const statsScheduler = new DocumentStatsScheduler()
 const sourceMapService = new SourceMapService()
 const previewScroll = new PreviewScroll(editorRegistry)
 const previewShell = createPreviewDocument('')
 const previewFrame = useTemplateRef('previewFrame')
+const currentStats = ref<DocumentStats | undefined>()
+const statsPending = ref(false)
+const cursorPosition = ref({ line: 1, column: 1 })
 let previewResult: Pick<RenderResult, 'documentId' | 'revision' | 'html' | 'blocks'> | undefined
 const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
   const tab = tabs.value.find((item) => item.id === id)
@@ -62,6 +67,7 @@ const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
     revision: editorRegistry.get(id)?.revision ?? 0,
     source: editorRegistry.getText(id),
   })
+  scheduleStats(id)
 })
 const activeNav = ref<NavTab>('files')
 const activeTab = ref<string | null>(persisted.session.activeDocument)
@@ -81,6 +87,18 @@ for (const tab of tabs.value) {
   const text = editorTexts[tab.id] ?? ''
   editorRegistry.register(tab.id, text, tab.modified ? '' : text)
 }
+const stopCursorSubscription = editorRegistry.subscribeCursor((id) => {
+  if (id === activeTab.value) cursorPosition.value = editorRegistry.cursorPosition(id)
+})
+const stopStatsSubscription = statsScheduler.subscribe((event) => {
+  if (
+    event.documentId === activeTab.value &&
+    event.revision === editorRegistry.get(event.documentId)?.revision
+  ) {
+    currentStats.value = event.stats
+    statsPending.value = false
+  }
+})
 const stopRenderSubscription = renderScheduler.subscribe((result) => {
   if (result.documentId !== activeTab.value) return
   previewResult = {
@@ -116,6 +134,12 @@ const duplicateNames = computed(
     ),
 )
 const hasDocument = computed(() => activeTab.value !== null)
+const activeDocument = computed(() => tabs.value.find((tab) => tab.id === activeTab.value))
+const saveStatus = computed(() => {
+  const tab = activeDocument.value
+  if (!tab) return ''
+  return tab.modified || tab.id.startsWith('untitled-') ? '未保存' : '已保存'
+})
 
 const isNarrow = computed(() => viewportWidth.value - navWidth.value < 640)
 const navCollapsed = computed(() => !navVisible.value || isNarrow.value)
@@ -140,6 +164,17 @@ function scheduleActiveRender() {
     documentId: activeTab.value,
     revision: editorRegistry.get(activeTab.value)?.revision ?? 0,
     source: editorRegistry.getText(activeTab.value),
+  })
+}
+
+function scheduleStats(id: string) {
+  if (id !== activeTab.value) return
+  currentStats.value = undefined
+  statsPending.value = true
+  statsScheduler.schedule({
+    documentId: id,
+    revision: editorRegistry.get(id)?.revision ?? 0,
+    source: editorRegistry.getText(id),
   })
 }
 
@@ -434,6 +469,11 @@ watch(
     if (!id) previewScroll.detach()
     updatePreview()
     previewScroll.attachSource()
+    currentStats.value = undefined
+    statsPending.value = false
+    cursorPosition.value = id ? editorRegistry.cursorPosition(id) : { line: 1, column: 1 }
+    if (id) scheduleStats(id)
+    else statsScheduler.cancel()
     scheduleActiveRender()
   },
   { flush: 'post' },
@@ -522,6 +562,7 @@ onMounted(() => {
   if (central.value) resizeObserver.observe(central.value)
   updateCentralSize()
   scheduleActiveRender()
+  if (activeTab.value) scheduleStats(activeTab.value)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateViewport)
@@ -533,8 +574,11 @@ onBeforeUnmount(() => {
   flushWindowState()
   settingsStore.flush()
   stopEditorSubscription()
+  stopCursorSubscription()
+  stopStatsSubscription()
   stopRenderSubscription()
   renderScheduler.dispose()
+  statsScheduler.dispose()
   previewScroll.dispose()
   editorRegistry.destroy()
   resizeObserver?.disconnect()
@@ -822,13 +866,26 @@ onBeforeUnmount(() => {
     </section>
 
     <footer class="status-bar" aria-label="文档状态">
-      <span class="command-feedback" role="status" aria-live="polite">{{
+      <span class="command-feedback" role="status" aria-label="命令反馈" aria-live="polite">{{
         lastCommand ? `已执行：${lastCommand}` : ''
       }}</span>
-      <span class="status-document"
-        >{{ activeTab === 'readme' ? 'README.md' : 'notes.md' }} · 已保存</span
-      ><span>34 字 · 52 字符</span><span>行 3，列 7</span
-      ><span class="status-mode">{{
+      <span class="status-document" role="status" aria-label="文档保存状态">{{
+        activeDocument ? `${activeDocument.label} · ${saveStatus}` : '未打开文档'
+      }}</span>
+      <span v-if="activeDocument" class="status-cursor" title="行列从 1 开始，列按字素簇计数"
+        >行 {{ cursorPosition.line }}，列 {{ cursorPosition.column }}</span
+      >
+      <span
+        v-if="activeDocument"
+        class="status-statistics"
+        title="统计基于 Markdown 源码，字符数包含空白与换行"
+      >
+        <template v-if="currentStats"
+          >{{ currentStats.words }} 字 · {{ currentStats.characters }} 字符</template
+        >
+        <template v-else>{{ statsPending ? '统计中…' : '统计不可用' }}</template>
+      </span>
+      <span class="status-mode">{{
         effectiveMode === 'preview'
           ? '仅预览模式'
           : effectiveMode === 'source'

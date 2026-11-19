@@ -611,7 +611,7 @@ button:disabled {
   .status-bar {
     gap: 8px;
   }
-  .status-bar > span:nth-child(2) {
+  .status-bar .status-statistics {
     display: none;
   }
 }

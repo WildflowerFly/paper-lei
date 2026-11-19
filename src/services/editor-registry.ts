@@ -65,6 +65,11 @@ export type EditorChange = {
   dirty: boolean
 }
 
+const columnSegmenter =
+  typeof Intl.Segmenter === 'function'
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : undefined
+
 const baseExtensions: Extension = [
   lineNumbers(),
   foldGutter(),
@@ -90,6 +95,7 @@ export class EditorRegistry {
   private options: EditorOptions = {}
   private readonly listeners = new Set<(change: EditorChange) => void>()
   private readonly scrollListeners = new Set<(id: string) => void>()
+  private readonly cursorListeners = new Set<(id: string) => void>()
 
   subscribe(listener: (change: EditorChange) => void) {
     this.listeners.add(listener)
@@ -99,6 +105,27 @@ export class EditorRegistry {
   subscribeScroll(listener: (id: string) => void) {
     this.scrollListeners.add(listener)
     return () => this.scrollListeners.delete(listener)
+  }
+
+  subscribeCursor(listener: (id: string) => void) {
+    this.cursorListeners.add(listener)
+    return () => this.cursorListeners.delete(listener)
+  }
+
+  cursorPosition(id: string) {
+    const state = this.require(id).state
+    const head = state.selection.main.head
+    const line = state.doc.lineAt(head)
+    let column = 1
+    if (columnSegmenter) {
+      for (const segment of columnSegmenter.segment(line.text)) {
+        if (segment.index + segment.segment.length > head - line.from) break
+        column++
+      }
+    } else {
+      column = Array.from(line.text.slice(0, head - line.from)).length + 1
+    }
+    return { line: line.number, column }
   }
 
   register(id: string, text: string, savedText = text) {
@@ -286,6 +313,9 @@ export class EditorRegistry {
     }
     if (this.view && this.activeId === id && this.view.state !== transaction.state) {
       this.view.update([transaction])
+    }
+    if (transaction.selection || transaction.docChanged) {
+      for (const listener of this.cursorListeners) listener(id)
     }
   }
 

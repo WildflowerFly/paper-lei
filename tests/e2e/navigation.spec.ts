@@ -29,7 +29,7 @@ test('shows duplicate paths, recent/favorite groups and missing-file feedback', 
   await expect(page.getByText('最近打开')).toBeVisible()
   await expect(page.getByText('收藏')).toBeVisible()
   await page.getByRole('button', { name: 'archive.md docs/archive.md' }).click()
-  await expect(page.getByRole('status')).toContainText('文件不存在')
+  await expect(page.getByRole('status', { name: '命令反馈' })).toContainText('文件不存在')
 })
 
 test('reuses an opened file and returns to welcome state after closing all tabs', async ({
