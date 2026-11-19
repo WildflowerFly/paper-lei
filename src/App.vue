@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import UiButton from './components/ui/UiButton.vue'
+import UiDialog from './components/ui/UiDialog.vue'
 import {
   commandIsEnabled,
   commandMenus,
@@ -9,8 +10,14 @@ import {
   type CommandId,
   type CommandMenu,
 } from './services/commands'
+import {
+  applyTheme,
+  normalizeWindowBounds,
+  useSettingsStore,
+  type LayoutMode,
+  type ThemePreference,
+} from './services/settings'
 
-type LayoutMode = 'split' | 'preview' | 'source'
 type NavTab = 'files' | 'search' | 'outline'
 type FileEntry = {
   id: string
@@ -21,19 +28,28 @@ type FileEntry = {
 
 const shell = useTemplateRef('shell')
 const central = useTemplateRef('central')
-const navWidth = ref(240)
+const settingsStore = useSettingsStore()
+settingsStore.hydrate()
+const persisted = settingsStore.state
+const navWidth = ref(persisted.settings.layout.navWidth)
 const viewportWidth = ref(1440)
 const centralWidth = ref(0)
-const previewRatio = ref(50)
-const navVisible = ref(true)
-const layoutMode = ref<LayoutMode>('split')
-const narrowPane = ref<'preview' | 'source'>('preview')
+const previewRatio = ref(persisted.settings.layout.previewRatio)
+const navVisible = ref(persisted.settings.layout.navVisible)
+const layoutMode = ref<LayoutMode>(persisted.settings.layout.mode)
+const narrowPane = ref<'preview' | 'source'>(persisted.settings.layout.narrowPane)
+const themePreference = ref<ThemePreference>(persisted.settings.theme)
+const settingsOpen = ref(false)
 const activeNav = ref<NavTab>('files')
-const activeTab = ref<string | null>('readme')
-const tabs = ref([
-  { id: 'readme', label: 'README.md', modified: false },
-  { id: 'notes', label: 'notes.md', modified: true },
-])
+const activeTab = ref<string | null>(persisted.session.activeDocument)
+const initialTabs = persisted.session.tabs.length ? persisted.session.tabs : ['readme', 'notes']
+const tabs = ref(
+  initialTabs.map((id) => ({
+    id,
+    label: id === 'readme' ? 'README.md' : id === 'notes' ? 'notes.md' : `未命名 ${id}`,
+    modified: id.startsWith('untitled-') || id === 'notes',
+  })),
+)
 const openMenu = ref<CommandMenu | null>(null)
 const lastCommand = ref('')
 const dragging = ref(false)
@@ -48,8 +64,8 @@ const fileEntries: FileEntry[] = [
   { id: 'notes', label: 'notes.md', path: 'docs/notes.md' },
   { id: 'missing', label: 'archive.md', path: 'docs/archive.md', state: 'missing' },
 ]
-const recentFiles = ref(['docs/README.md', 'docs/notes.md'])
-const favoriteFiles = ref(['docs/README.md'])
+const recentFiles = ref([...persisted.recent])
+const favoriteFiles = ref([...persisted.favorites])
 const duplicateNames = computed(
   () =>
     new Set(
@@ -70,6 +86,8 @@ const previewPixels = computed(() => Math.round((centralWidth.value * previewRat
 const separatorMax = computed(() => Math.max(320, centralWidth.value - 320))
 const shellStyle = computed(() => ({ '--nav-width': `${navWidth.value}px` }))
 const centralStyle = computed(() => ({ '--preview-ratio': `${previewRatio.value}%` }))
+
+applyTheme(themePreference.value)
 
 function updateViewport() {
   viewportWidth.value = window.innerWidth
@@ -140,6 +158,47 @@ function chooseMode(mode: LayoutMode) {
   if (mode !== 'split') narrowPane.value = mode
 }
 
+function setThemePreference(theme: ThemePreference) {
+  themePreference.value = theme
+  settingsStore.setTheme(theme)
+}
+
+function cycleTheme() {
+  const next: Record<ThemePreference, ThemePreference> = {
+    system: 'light',
+    light: 'dark',
+    dark: 'system',
+  }
+  setThemePreference(next[themePreference.value])
+}
+
+function captureWindowState() {
+  const current = persisted.session.window
+  const bounds = normalizeWindowBounds(
+    {
+      x: Number.isFinite(window.screenX) ? window.screenX : current.x,
+      y: Number.isFinite(window.screenY) ? window.screenY : current.y,
+      width: window.outerWidth || window.innerWidth || current.width,
+      height: window.outerHeight || window.innerHeight || current.height,
+      maximized: current.maximized,
+    },
+    [
+      {
+        x: Number((window.screen as { availLeft?: number }).availLeft ?? 0),
+        y: Number((window.screen as { availTop?: number }).availTop ?? 0),
+        width: window.screen.availWidth,
+        height: window.screen.availHeight,
+      },
+    ],
+  )
+  settingsStore.updateSession({ window: bounds })
+}
+
+function flushWindowState() {
+  captureWindowState()
+  settingsStore.flush()
+}
+
 function menuCommands(menu: CommandMenu) {
   return commands.filter((command) => command.menu === menu)
 }
@@ -170,8 +229,10 @@ function dispatchCommand(id: CommandId) {
       activeNav.value = 'outline'
       break
     case 'view.theme':
-      document.documentElement.dataset.theme =
-        document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'
+      cycleTheme()
+      break
+    case 'tools.settings':
+      settingsOpen.value = true
       break
     case 'file.new': {
       const id = `untitled-${tabs.value.length + 1}`
@@ -190,6 +251,33 @@ function dispatchCommand(id: CommandId) {
       break
   }
 }
+
+watch(
+  [navWidth, previewRatio, navVisible, layoutMode, narrowPane],
+  () =>
+    settingsStore.updateLayout({
+      navWidth: navWidth.value,
+      previewRatio: previewRatio.value,
+      navVisible: navVisible.value,
+      mode: layoutMode.value,
+      narrowPane: narrowPane.value,
+    }),
+  { flush: 'post' },
+)
+watch(
+  [activeTab, tabs],
+  () =>
+    settingsStore.updateSession({
+      activeDocument: activeTab.value,
+      tabs: tabs.value.map((tab) => tab.id),
+    }),
+  { deep: true, flush: 'post' },
+)
+watch(recentFiles, () => settingsStore.setRecent(recentFiles.value), { deep: true, flush: 'post' })
+watch(favoriteFiles, () => settingsStore.setFavorites(favoriteFiles.value), {
+  deep: true,
+  flush: 'post',
+})
 
 function closeTab(tabId: string) {
   if (activeTab.value !== tabId) activeTab.value = tabId
@@ -249,6 +337,8 @@ onMounted(() => {
   window.addEventListener('pointermove', onPointerMove)
   window.addEventListener('pointerup', stopResize)
   window.addEventListener('keydown', onGlobalKeydown)
+  window.addEventListener('pagehide', flushWindowState)
+  window.addEventListener('beforeunload', flushWindowState)
   resizeObserver = new ResizeObserver(updateCentralSize)
   if (central.value) resizeObserver.observe(central.value)
   updateCentralSize()
@@ -258,6 +348,10 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', stopResize)
   window.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('pagehide', flushWindowState)
+  window.removeEventListener('beforeunload', flushWindowState)
+  flushWindowState()
+  settingsStore.flush()
   resizeObserver?.disconnect()
 })
 </script>
@@ -341,6 +435,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
         <UiButton aria-label="当前主题" @click="dispatchCommand('view.theme')">主题</UiButton>
+        <UiButton aria-label="打开设置" @click="dispatchCommand('tools.settings')">设置</UiButton>
       </div>
     </header>
 
@@ -553,5 +648,42 @@ onBeforeUnmount(() => {
             : '双栏模式'
       }}</span>
     </footer>
+
+    <UiDialog v-model="settingsOpen" title="设置">
+      <div class="settings-panel">
+        <label class="settings-field"
+          >主题
+          <select
+            aria-label="主题偏好"
+            :value="themePreference"
+            @change="
+              setThemePreference(($event.target as HTMLSelectElement).value as ThemePreference)
+            "
+          >
+            <option value="system">跟随系统</option>
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+          </select>
+        </label>
+        <label class="settings-field"
+          >默认布局
+          <select
+            aria-label="默认布局"
+            :value="layoutMode"
+            @change="chooseMode(($event.target as HTMLSelectElement).value as LayoutMode)"
+          >
+            <option value="split">双栏</option>
+            <option value="preview">仅预览</option>
+            <option value="source">仅源码</option>
+          </select>
+        </label>
+        <p v-if="settingsStore.notice === 'repaired'" class="settings-warning" role="status">
+          配置文件无法读取，已恢复默认设置。
+        </p>
+      </div>
+      <template #actions>
+        <UiButton variant="primary" @click="settingsOpen = false">完成</UiButton>
+      </template>
+    </UiDialog>
   </main>
 </template>

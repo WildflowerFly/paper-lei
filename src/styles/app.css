@@ -488,6 +488,32 @@ button:disabled {
 .status-mode {
   margin-inline-start: auto;
 }
+.settings-panel {
+  display: grid;
+  gap: 16px;
+  min-width: min(360px, calc(100vw - 80px));
+}
+.settings-field {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.settings-field select {
+  min-height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-control);
+  border-radius: 6px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+.settings-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border-inline-start: 3px solid var(--warning);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
 .is-narrow .narrow-switcher {
   display: flex;
   position: absolute;
