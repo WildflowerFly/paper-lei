@@ -25,6 +25,8 @@ import {
   EditorView,
   type DecorationSet,
 } from '@codemirror/view'
+import { formatSelection, type FormatCommand } from './editor-format'
+import { documentSearch, showDocumentSearch } from './editor-search'
 
 const setSourceHighlight = StateEffect.define<{ from: number } | null>()
 const sourceHighlight = StateField.define<DecorationSet>({
@@ -78,6 +80,7 @@ const baseExtensions: Extension = [
   indentUnit.of('  '),
   EditorState.allowMultipleSelections.of(true),
   sourceHighlight,
+  documentSearch,
 ]
 
 export class EditorRegistry {
@@ -177,6 +180,16 @@ export class EditorRegistry {
 
   redo() {
     if (this.view) redo(this.view)
+  }
+
+  showSearch(replace: boolean) {
+    if (this.view) showDocumentSearch(this.view, replace)
+  }
+
+  format(command: FormatCommand) {
+    if (!this.view || this.view.state.readOnly || this.view.composing) return
+    this.view.dispatch(formatSelection(this.view.state, command))
+    this.view.focus()
   }
 
   revealLine(line: number) {

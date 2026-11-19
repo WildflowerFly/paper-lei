@@ -323,6 +323,11 @@ function commandEnabled(command: CommandDefinition) {
   return commandIsEnabled(command, hasDocument.value)
 }
 
+function showSourcePane() {
+  if (layoutMode.value === 'preview') layoutMode.value = 'source'
+  narrowPane.value = 'source'
+}
+
 function dispatchCommand(id: CommandId) {
   const command = commands.find((item) => item.id === id)
   if (!command || !commandEnabled(command)) return
@@ -359,6 +364,24 @@ function dispatchCommand(id: CommandId) {
       break
     case 'edit.redo':
       editorRegistry.redo()
+      break
+    case 'edit.find':
+    case 'edit.replace':
+      showSourcePane()
+      void nextTick(() => editorRegistry.showSearch(id === 'edit.replace'))
+      break
+    case 'format.heading':
+    case 'format.bold':
+    case 'format.italic':
+    case 'format.strikethrough':
+    case 'format.list':
+    case 'format.quote':
+    case 'format.code':
+    case 'format.link':
+    case 'format.image':
+    case 'format.table':
+      showSourcePane()
+      void nextTick(() => editorRegistry.format(id))
       break
     case 'file.new': {
       const id = `untitled-${tabs.value.length + 1}`
@@ -474,10 +497,14 @@ function shortcutForEvent(event: KeyboardEvent) {
 }
 
 function onGlobalKeydown(event: KeyboardEvent) {
-  if (event.isComposing) return
+  if (event.isComposing || event.defaultPrevented) return
   const shortcut = shortcutForEvent(event)
   const command = commands.find((item) => item.shortcut === shortcut)
   if (!command) return
+  if (command.id === 'edit.undo' || command.id === 'edit.redo') {
+    const target = event.target as Element | null
+    if (target?.closest('input, textarea')) return
+  }
   event.preventDefault()
   dispatchCommand(command.id)
 }

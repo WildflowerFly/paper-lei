@@ -444,6 +444,50 @@ button:disabled {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.markdown-editor .cm-panels-top {
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  border-bottom-color: var(--border-default);
+}
+.document-search {
+  display: grid;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.document-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+}
+.document-search-row[hidden] {
+  display: none;
+}
+.document-search input {
+  flex: 1 1 110px;
+  min-width: 110px;
+  min-height: 28px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-control);
+  border-radius: 4px;
+  background: var(--bg-app);
+}
+.document-search output {
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.document-search .ui-button {
+  min-height: 28px;
+  padding: 2px 6px;
+}
+.markdown-editor .cm-searchMatch {
+  background: var(--bg-selected);
+  outline: 1px solid var(--border-control);
+}
+.markdown-editor .cm-searchMatch-selected {
+  outline: 2px solid var(--focus-ring);
+}
 .source-pane textarea {
   display: none;
   width: 100%;

@@ -30,6 +30,7 @@ export default tseslint.config(
         PointerEvent: 'readonly',
         ResizeObserver: 'readonly',
         HTMLButtonElement: 'readonly',
+        HTMLInputElement: 'readonly',
         HTMLSelectElement: 'readonly',
         Event: 'readonly',
         KeyboardEvent: 'readonly',
