@@ -1,0 +1,212 @@
+import { markdown } from '@codemirror/lang-markdown'
+import { defaultKeymap, history, historyKeymap, redo, undo } from '@codemirror/commands'
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  foldGutter,
+  indentUnit,
+  indentOnInput,
+  syntaxHighlighting,
+} from '@codemirror/language'
+import {
+  EditorState,
+  type Extension,
+  type Transaction,
+  type TransactionSpec,
+} from '@codemirror/state'
+import {
+  keymap,
+  lineNumbers,
+  highlightActiveLine,
+  drawSelection,
+  EditorView,
+} from '@codemirror/view'
+
+export type EditorSession = {
+  id: string
+  state: EditorState
+  savedText: string
+  revision: number
+  scrollTop: number
+}
+
+export type EditorOptions = {
+  lineWrapping?: boolean
+  fontSize?: number
+}
+
+export type EditorChange = {
+  id: string
+  revision: number
+  dirty: boolean
+}
+
+const baseExtensions: Extension = [
+  lineNumbers(),
+  foldGutter(),
+  history(),
+  drawSelection(),
+  highlightActiveLine(),
+  bracketMatching(),
+  indentOnInput(),
+  syntaxHighlighting(defaultHighlightStyle),
+  keymap.of([...defaultKeymap, ...historyKeymap]),
+  markdown(),
+  EditorState.tabSize.of(2),
+  indentUnit.of('  '),
+  EditorState.allowMultipleSelections.of(true),
+]
+
+export class EditorRegistry {
+  private readonly sessions = new Map<string, EditorSession>()
+  private activeId: string | null = null
+  private view: EditorView | null = null
+  private options: EditorOptions = {}
+  private readonly listeners = new Set<(change: EditorChange) => void>()
+
+  subscribe(listener: (change: EditorChange) => void) {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  register(id: string, text: string, savedText = text) {
+    if (this.sessions.has(id)) return this.sessions.get(id)!
+    const session: EditorSession = {
+      id,
+      state: this.createState(id, text),
+      savedText,
+      revision: 0,
+      scrollTop: 0,
+    }
+    this.sessions.set(id, session)
+    return session
+  }
+
+  has(id: string) {
+    return this.sessions.has(id)
+  }
+
+  get(id: string) {
+    return this.sessions.get(id)
+  }
+
+  getText(id: string) {
+    return this.sessions.get(id)?.state.doc.toString() ?? ''
+  }
+
+  isDirty(id: string) {
+    const session = this.sessions.get(id)
+    return session ? session.state.doc.toString() !== session.savedText : false
+  }
+
+  markSaved(id: string) {
+    const session = this.require(id)
+    session.savedText = session.state.doc.toString()
+  }
+
+  dispatch(id: string, spec: TransactionSpec) {
+    const session = this.require(id)
+    const transaction = session.state.update(spec)
+    this.applyTransaction(id, transaction)
+  }
+
+  activate(id: string, parent: HTMLElement, options: EditorOptions = {}) {
+    this.require(id)
+    this.options = options
+    if (!this.view) {
+      this.activeId = id
+      this.view = new EditorView({
+        state: this.require(id).state,
+        parent,
+        dispatch: (transaction) => this.dispatchActive(transaction),
+      })
+    } else {
+      if (this.activeId) {
+        const current = this.require(this.activeId)
+        current.scrollTop = this.view.scrollDOM.scrollTop
+      }
+      this.activeId = id
+      this.view.setState(this.require(id).state)
+      requestAnimationFrame(() => {
+        if (this.view && this.activeId === id)
+          this.view.scrollDOM.scrollTop = this.require(id).scrollTop
+      })
+    }
+    this.configureView()
+    return this.view
+  }
+
+  updateOptions(options: EditorOptions) {
+    this.options = options
+    this.configureView()
+  }
+
+  undo() {
+    if (this.view) undo(this.view)
+  }
+
+  redo() {
+    if (this.view) redo(this.view)
+  }
+
+  activeDocument() {
+    return this.activeId
+  }
+
+  destroy() {
+    if (this.activeId && this.view)
+      this.require(this.activeId).scrollTop = this.view.scrollDOM.scrollTop
+    this.view?.destroy()
+    this.view = null
+    this.activeId = null
+  }
+
+  private createState(id: string, text: string) {
+    return EditorState.create({
+      doc: text,
+      extensions: [
+        baseExtensions,
+        EditorView.domEventHandlers({
+          compositionend: () => {
+            return false
+          },
+        }),
+        EditorView.contentAttributes.of({
+          'aria-label': '源码编辑器',
+          'aria-multiline': 'true',
+          'data-document-id': id,
+        }),
+      ],
+    })
+  }
+
+  private configureView() {
+    if (!this.view) return
+    const className = this.options.lineWrapping ? 'cm-lineWrapping' : ''
+    this.view.dom.classList.toggle('cm-lineWrapping', Boolean(className))
+    this.view.dom.style.setProperty('--editor-font-size', `${this.options.fontSize ?? 14}px`)
+  }
+
+  private applyTransaction(id: string, transaction: Transaction) {
+    const session = this.require(id)
+    session.state = transaction.state
+    if (transaction.docChanged) session.revision += 1
+    if (transaction.docChanged) {
+      const change = { id, revision: session.revision, dirty: this.isDirty(id) }
+      for (const listener of this.listeners) listener(change)
+    }
+    if (this.view && this.activeId === id && this.view.state !== transaction.state) {
+      this.view.update([transaction])
+    }
+  }
+
+  private dispatchActive(transaction: Transaction) {
+    if (this.activeId) this.applyTransaction(this.activeId, transaction)
+  }
+
+  private require(id: string) {
+    const session = this.sessions.get(id)
+    if (!session) throw new Error(`Unknown editor document: ${id}`)
+    return session
+  }
+}

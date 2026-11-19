@@ -104,9 +104,10 @@ PRD 的七个开发阶段保留核心顺序；本清单将早期风险验证和�
 
 ### M2：编辑器与基础实时预览
 
-- [ ] **EDT-01：集成 CodeMirror 6 与独立文档状态** — P0 / L；依赖：UI-02、UI-03。
+- [x] **EDT-01：集成 CodeMirror 6 与独立文档状态** — P0 / L；依赖：UI-02、UI-03。
   - 产出：EditorRegistry、DocumentSession，Markdown 高亮、行号、缩进、折叠、撤销重做、字体与换行扩展。
   - 验收：两个草稿切换后光标、选区、滚动与历史独立；输入法和 Emoji 正常；配置修改不重建历史。对应 PRD §4.2、AT-07。
+  - 证据：[CodeMirror 编辑器与独立文档状态验收记录](./verification/EDT-01.md)，EditorRegistry 单测与专项 Playwright 测试通过。
 
 - [ ] **EDT-02：实现安全的 Markdown 基础解析与调度** — P0 / L；依赖：EDT-01、FND-05。
   - 产出：Worker 解析、100ms 调度、document/revision/renderEpoch 校验、块级结果与基础净化。

@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue'
 import UiButton from './components/ui/UiButton.vue'
 import UiDialog from './components/ui/UiDialog.vue'
+import MarkdownEditor from './components/editor/MarkdownEditor.vue'
 import {
   commandIsEnabled,
   commandMenus,
@@ -17,6 +18,7 @@ import {
   type LayoutMode,
   type ThemePreference,
 } from './services/settings'
+import { EditorRegistry } from './services/editor-registry'
 
 type NavTab = 'files' | 'search' | 'outline'
 type FileEntry = {
@@ -40,6 +42,11 @@ const layoutMode = ref<LayoutMode>(persisted.settings.layout.mode)
 const narrowPane = ref<'preview' | 'source'>(persisted.settings.layout.narrowPane)
 const themePreference = ref<ThemePreference>(persisted.settings.theme)
 const settingsOpen = ref(false)
+const editorRegistry = new EditorRegistry()
+const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
+  const tab = tabs.value.find((item) => item.id === id)
+  if (tab) tab.modified = dirty
+})
 const activeNav = ref<NavTab>('files')
 const activeTab = ref<string | null>(persisted.session.activeDocument)
 const initialTabs = persisted.session.tabs.length ? persisted.session.tabs : ['readme', 'notes']
@@ -50,6 +57,14 @@ const tabs = ref(
     modified: id.startsWith('untitled-') || id === 'notes',
   })),
 )
+const editorTexts: Record<string, string> = {
+  readme: '# Markdown Studio\n\n在右侧编辑 Markdown 源码。\n',
+  notes: '# Notes\n\n这是一个独立的文档草稿。\n',
+}
+for (const tab of tabs.value) {
+  const text = editorTexts[tab.id] ?? ''
+  editorRegistry.register(tab.id, text, tab.modified ? '' : text)
+}
 const openMenu = ref<CommandMenu | null>(null)
 const lastCommand = ref('')
 const dragging = ref(false)
@@ -234,9 +249,16 @@ function dispatchCommand(id: CommandId) {
     case 'tools.settings':
       settingsOpen.value = true
       break
+    case 'edit.undo':
+      editorRegistry.undo()
+      break
+    case 'edit.redo':
+      editorRegistry.redo()
+      break
     case 'file.new': {
       const id = `untitled-${tabs.value.length + 1}`
       tabs.value.push({ id, label: `未命名 ${tabs.value.length + 1}`, modified: true })
+      editorRegistry.register(id, '')
       activeTab.value = id
       break
     }
@@ -245,6 +267,9 @@ function dispatchCommand(id: CommandId) {
       if (position < 0) break
       tabs.value.splice(position, 1)
       activeTab.value = tabs.value[position]?.id ?? tabs.value[position - 1]?.id ?? null
+      if (activeTab.value && !editorRegistry.has(activeTab.value)) {
+        editorRegistry.register(activeTab.value, editorTexts[activeTab.value] ?? '')
+      }
       break
     }
     default:
@@ -291,6 +316,10 @@ function openFile(file: FileEntry) {
   }
   const existing = tabs.value.find((tab) => tab.id === file.id)
   if (!existing) tabs.value.push({ id: file.id, label: file.label, modified: false })
+  if (!editorRegistry.has(file.id)) {
+    const text = editorTexts[file.id] ?? ''
+    editorRegistry.register(file.id, text)
+  }
   activeTab.value = file.id
   if (!recentFiles.value.includes(file.path)) recentFiles.value.unshift(file.path)
 }
@@ -352,6 +381,8 @@ onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', flushWindowState)
   flushWindowState()
   settingsStore.flush()
+  stopEditorSubscription()
+  editorRegistry.destroy()
   resizeObserver?.disconnect()
 })
 </script>
@@ -618,10 +649,12 @@ onBeforeUnmount(() => {
         <header class="pane-header">
           <span id="source-title">源码</span><span class="pane-hint">Markdown</span>
         </header>
-        <textarea aria-label="源码编辑器" spellcheck="false">
-# Markdown Studio
-
-在右侧编辑 Markdown 源码。</textarea>
+        <MarkdownEditor
+          :registry="editorRegistry"
+          :document-id="activeTab"
+          :line-wrapping="true"
+          :font-size="14"
+        />
       </section>
       <section v-if="!activeTab" class="empty-document" aria-label="欢迎页">
         <h2>开始使用 Markdown Studio</h2>
