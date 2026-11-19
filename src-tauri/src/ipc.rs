@@ -76,6 +76,75 @@ pub fn open_document(
 }
 
 #[tauri::command]
+pub fn watch_document(
+    window: WebviewWindow,
+    app: AppHandle,
+    registry: State<'_, std::sync::Mutex<AuthorizationRegistry>>,
+    watches: State<'_, std::sync::Mutex<markdown_studio::prototypes::file_watch::FileWatchRegistry>>,
+    token: AuthorizationToken,
+) -> Result<(), IpcError> {
+    if window.label() != "main" {
+        return Err(window_error());
+    }
+    let path = registry
+        .lock()
+        .map_err(|_| IpcError::internal("The authorization service is unavailable"))?
+        .document_path(token)?;
+    watches
+        .lock()
+        .map_err(|_| IpcError::internal("The file watcher is unavailable"))?
+        .watch(app, token.as_string(), &path)
+        .map_err(|_| IpcError::internal("The document could not be watched"))
+}
+
+#[tauri::command]
+pub fn read_latest_document(
+    window: WebviewWindow,
+    registry: State<'_, std::sync::Mutex<AuthorizationRegistry>>,
+    token: AuthorizationToken,
+) -> Result<OpenDocument, IpcError> {
+    if window.label() != "main" {
+        return Err(window_error());
+    }
+    registry
+        .lock()
+        .map_err(|_| IpcError::internal("The authorization service is unavailable"))?
+        .read_latest_document(token)
+}
+
+#[tauri::command]
+pub fn adopt_document_version(
+    window: WebviewWindow,
+    registry: State<'_, std::sync::Mutex<AuthorizationRegistry>>,
+    token: AuthorizationToken,
+    expected_disk_version: DiskVersion,
+) -> Result<OpenDocument, IpcError> {
+    if window.label() != "main" {
+        return Err(window_error());
+    }
+    registry
+        .lock()
+        .map_err(|_| IpcError::internal("The authorization service is unavailable"))?
+        .adopt_document_version(token, &expected_disk_version)
+}
+
+#[tauri::command]
+pub fn unwatch_document(
+    window: WebviewWindow,
+    watches: State<'_, std::sync::Mutex<markdown_studio::prototypes::file_watch::FileWatchRegistry>>,
+    token: AuthorizationToken,
+) -> Result<(), IpcError> {
+    if window.label() != "main" {
+        return Err(window_error());
+    }
+    watches
+        .lock()
+        .map_err(|_| IpcError::internal("The file watcher is unavailable"))?
+        .unwatch(&token.as_string());
+    Ok(())
+}
+
+#[tauri::command]
 pub fn save_document(
     window: WebviewWindow,
     registry: State<'_, std::sync::Mutex<AuthorizationRegistry>>,

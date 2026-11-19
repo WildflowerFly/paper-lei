@@ -577,6 +577,78 @@ button:disabled {
   color: inherit;
   cursor: pointer;
 }
+.conflict-panel {
+  display: grid;
+  gap: 8px;
+  max-height: min(42vh, 360px);
+  padding: 10px;
+  overflow: auto;
+  border-block-end: 1px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg-panel));
+}
+.conflict-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+.conflict-heading span,
+.conflict-columns h3 {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+}
+.conflict-columns {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 8px;
+  min-height: 110px;
+}
+.conflict-columns section {
+  min-width: 0;
+  border: 1px solid var(--border-default);
+  background: var(--bg-app);
+}
+.conflict-columns h3 {
+  margin: 0;
+  padding: 4px 6px;
+  border-block-end: 1px solid var(--border-default);
+}
+.conflict-columns pre {
+  max-height: 180px;
+  margin: 0;
+  padding: 6px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font:
+    11px/1.45 'Cascadia Code',
+    Consolas,
+    monospace;
+}
+.conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.conflict-actions button {
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-control);
+  border-radius: 4px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.conflict-actions .conflict-overwrite {
+  border-color: var(--danger);
+}
+@media (max-width: 900px) {
+  .conflict-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
 .status-mode {
   margin-inline-start: auto;
 }

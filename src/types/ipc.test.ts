@@ -31,6 +31,10 @@ describe('file IPC contract', () => {
     expect(invoke).toHaveBeenCalledWith('open_document', {
       token: 'a3fe5ac0-2433-4ed9-8ab7-e0e14ebcc326',
     })
+    await ipc.watchDocument(token)
+    expect(invoke).toHaveBeenCalledWith('watch_document', { token })
+    await ipc.unwatchDocument(token)
+    expect(invoke).toHaveBeenCalledWith('unwatch_document', { token })
     const metadata: TextMetadata = { bom: false, lineEndings: ['lf'], trailingNewline: true }
     const diskVersion = { fileId: '1:2', hash: 'hash', length: 1, modified: 1 }
     await ipc.saveDocument(token, 'x', metadata, 3, diskVersion)
@@ -46,6 +50,11 @@ describe('file IPC contract', () => {
       text: 'x',
       metadata,
       revision: 3,
+    })
+    await ipc.adoptDocumentVersion(token, diskVersion)
+    expect(invoke).toHaveBeenCalledWith('adopt_document_version', {
+      token,
+      expectedDiskVersion: diskVersion,
     })
   })
 })

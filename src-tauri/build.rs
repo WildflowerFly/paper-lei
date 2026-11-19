@@ -4,6 +4,10 @@ fn main() {
             "inspect_authorized_entry",
             "choose_and_open_documents",
             "open_document",
+            "read_latest_document",
+            "adopt_document_version",
+            "watch_document",
+            "unwatch_document",
             "save_document",
             "save_document_as",
         ]));

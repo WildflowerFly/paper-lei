@@ -26,6 +26,12 @@ import { PreviewScroll } from './services/preview-scroll'
 import { DocumentStatsScheduler, type DocumentStats } from './services/document-stats'
 import { SaveCoordinator, type SaveStatus } from './services/save-coordinator'
 import { createFileIpc, type OpenDocument, type TauriInvoke } from './types/ipc'
+import {
+  createConflictSession,
+  diskVersionChanged,
+  type ConflictSession,
+} from './services/document-conflict'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
 type NavTab = 'files' | 'search' | 'outline'
 type FileEntry = {
@@ -80,6 +86,7 @@ const statsPending = ref(false)
 const cursorPosition = ref({ line: 1, column: 1 })
 const saveStates = ref<Record<string, SaveStatus>>({})
 const saveErrors = ref<Record<string, string>>({})
+const conflicts = ref<Record<string, ConflictSession | undefined>>({})
 const saveCoordinator = new SaveCoordinator((documentId, status, error) => {
   saveStates.value = { ...saveStates.value, [documentId]: status }
   if (error) {
@@ -221,18 +228,132 @@ function scheduleStats(id: string) {
 }
 
 function scheduleDocumentSave(id: string) {
+  if (!editorRegistry.isDirty(id) || conflicts.value[id]) return
   const request = buildSaveRequest(id)
   if (request) saveCoordinator.schedule(request)
 }
 
+function watchAuthorizedDocument(token: OpenDocument['token']) {
+  void fileIpc?.watchDocument(token).catch(() => {
+    lastCommand.value = '文件变更监听不可用；切回应用时仍会复核磁盘版本'
+  })
+}
+
 function describeSaveError(error: unknown) {
   const payload = error as { code?: string; message?: string }
-  if (payload?.code === 'CONFLICT' || payload?.code === 'CONFLICT_DURING_COMMIT')
-    return '磁盘文件已变化，已暂停自动保存；请另存为以保留当前编辑'
+  if (payload?.code === 'CONFLICT_DURING_COMMIT') {
+    const operationId = (error as { operationId?: string })?.operationId
+    return `提交期间发现磁盘竞态，恢复副本已保留${operationId ? `（${operationId}）` : ''}；自动保存已暂停`
+  }
+  if (payload?.code === 'CONFLICT') return '磁盘文件已变化，已暂停自动保存；请另存为以保留当前编辑'
   if (payload?.code === 'READ_ONLY') return '文件为只读状态，当前编辑仍保留在内存中'
   if (payload?.code === 'DISK_FULL') return '磁盘空间不足，当前编辑仍保留在内存中'
   if (payload?.code === 'FILE_BUSY') return '文件正被其他程序占用，可重试或另存为'
   return payload?.message ?? '保存失败，当前编辑仍保留在内存中'
+}
+
+async function beginConflict(
+  id: string,
+  reason: 'modified' | 'missing' | 'replaced' | 'unavailable' = 'modified',
+  message?: string,
+) {
+  const tab = tabs.value.find((item) => item.id === id)
+  if (!tab?.token) return
+  saveCoordinator.pause(id)
+  const base = editorRegistry.getSavedText(id)
+  let disk: OpenDocument | null = null
+  if (fileIpc) {
+    try {
+      disk = await fileIpc.readLatestDocument(tab.token)
+      reason =
+        disk.identity.volume === tab.identity?.volume && disk.identity.index === tab.identity?.index
+          ? reason
+          : 'replaced'
+    } catch (error) {
+      reason = (error as { code?: string })?.code === 'NOT_FOUND' ? 'missing' : 'unavailable'
+    }
+  }
+  conflicts.value = {
+    ...conflicts.value,
+    [id]: createConflictSession(id, base, editorRegistry.getText(id), disk, reason),
+  }
+  showSourcePane()
+  saveStates.value = { ...saveStates.value, [id]: 'conflict' }
+  saveErrors.value = { ...saveErrors.value, [id]: message ?? describeConflict(reason) }
+}
+
+function describeConflict(reason: ConflictSession['reason']) {
+  if (reason === 'missing') return '原文件已删除或移动，自动保存已暂停；不会自动重建原文件'
+  if (reason === 'unavailable') return '无法读取原文件，自动保存已暂停；请另存为保留当前编辑'
+  if (reason === 'replaced') return '原文件已被替换，自动保存已暂停；请查看差异或明确覆盖'
+  return '文件已在外部更新，自动保存已暂停；请查看差异或明确处理'
+}
+
+async function reloadConflict(id: string) {
+  const conflict = conflicts.value[id]
+  const tab = tabs.value.find((item) => item.id === id)
+  if (!conflict?.disk || !tab) return
+  if (conflict.local !== editorRegistry.getSavedText(id)) {
+    const confirmed = window.confirm('重新加载会丢弃当前本地编辑。是否继续？')
+    if (!confirmed) return
+  }
+  const revision = editorRegistry.get(id)?.revision
+  try {
+    const adopted = fileIpc
+      ? await fileIpc.adoptDocumentVersion(tab.token!, conflict.disk.diskVersion)
+      : conflict.disk
+    if (revision !== editorRegistry.get(id)?.revision) {
+      await beginConflict(id)
+      return
+    }
+    editorRegistry.reload(id, adopted.text)
+    tab.metadata = adopted.metadata
+    tab.diskVersion = adopted.diskVersion
+    tab.identity = adopted.identity
+    tab.readOnly = adopted.readOnly
+    conflicts.value = { ...conflicts.value, [id]: undefined }
+    delete saveErrors.value[id]
+    saveCoordinator.resume(id)
+    saveStates.value = { ...saveStates.value, [id]: 'saved' }
+    lastCommand.value = '已重新加载磁盘版本'
+  } catch {
+    await beginConflict(id)
+  }
+}
+
+function keepConflictEdits(id: string) {
+  if (!conflicts.value[id]) return
+  saveStates.value = { ...saveStates.value, [id]: 'conflict' }
+  saveErrors.value = {
+    ...saveErrors.value,
+    [id]: '已保留当前编辑，自动保存仍暂停；请另存为或明确覆盖',
+  }
+}
+
+async function overwriteConflict(id: string) {
+  const conflict = conflicts.value[id]
+  const tab = tabs.value.find((item) => item.id === id)
+  if (!conflict?.disk || !tab?.token || !fileIpc) return
+  try {
+    const revision = editorRegistry.get(id)?.revision
+    const adopted = await fileIpc.adoptDocumentVersion(tab.token, conflict.disk.diskVersion)
+    tab.identity = adopted.identity
+    tab.diskVersion = adopted.diskVersion
+    tab.metadata = adopted.metadata
+    tab.readOnly = adopted.readOnly
+    conflicts.value = { ...conflicts.value, [id]: undefined }
+    delete saveErrors.value[id]
+    saveCoordinator.resume(id)
+    if (revision !== editorRegistry.get(id)?.revision) {
+      await beginConflict(id)
+      return
+    }
+    await saveDocument(id, true)
+    lastCommand.value = '已确认覆盖最新磁盘版本'
+  } catch (error) {
+    await beginConflict(id, 'modified', describeSaveError(error))
+    saveErrors.value = { ...saveErrors.value, [id]: describeSaveError(error) }
+  }
 }
 
 async function saveDocument(id: string, manual = false) {
@@ -240,6 +361,10 @@ async function saveDocument(id: string, manual = false) {
   if (!tab) return
   const session = editorRegistry.get(id)
   if (!session || !editorRegistry.isDirty(id)) return
+  if (conflicts.value[id]) {
+    lastCommand.value = '文档存在冲突，请先重新加载、另存为或确认覆盖'
+    return
+  }
   if (!tab.token || !tab.metadata || !tab.diskVersion) {
     await saveDocumentAs(id)
     return
@@ -283,6 +408,13 @@ function buildSaveRequest(id: string) {
     },
     onError: (error: unknown) => {
       saveErrors.value = { ...saveErrors.value, [id]: describeSaveError(error) }
+      const code = (error as { code?: string })?.code
+      if (code === 'CONFLICT' || code === 'CONFLICT_DURING_COMMIT' || code === 'NOT_FOUND')
+        void beginConflict(
+          id,
+          code === 'NOT_FOUND' ? 'missing' : 'modified',
+          describeSaveError(error),
+        )
     },
   }
 }
@@ -302,6 +434,7 @@ async function saveDocumentAs(id: string) {
       session.revision,
     )
     if (!saved) return
+    if (tab.token) void fileIpc.unwatchDocument(tab.token)
     tab.token = saved.token
     tab.label = saved.name
     tab.displayPath = saved.displayPath
@@ -311,7 +444,12 @@ async function saveDocumentAs(id: string) {
     tab.readOnly = saved.readOnly
     editorRegistry.markSaved(id, text)
     tab.modified = editorRegistry.isDirty(id)
+    conflicts.value = { ...conflicts.value, [id]: undefined }
+    saveCoordinator.resume(id)
     saveStates.value = { ...saveStates.value, [id]: 'saved' }
+    watchAuthorizedDocument(saved.token)
+    if (editorRegistry.isDirty(id)) scheduleDocumentSave(id)
+    if (editorRegistry.isDirty(id)) scheduleDocumentSave(id)
   } catch (error) {
     saveErrors.value = { ...saveErrors.value, [id]: describeSaveError(error) }
     saveStates.value = { ...saveStates.value, [id]: 'error' }
@@ -585,6 +723,8 @@ function dispatchCommand(id: CommandId) {
     case 'file.close': {
       const position = tabs.value.findIndex((tab) => tab.id === activeTab.value)
       if (position < 0) break
+      const closing = tabs.value[position]
+      if (closing?.token) void fileIpc?.unwatchDocument(closing.token)
       tabs.value.splice(position, 1)
       activeTab.value = tabs.value[position]?.id ?? tabs.value[position - 1]?.id ?? null
       if (activeTab.value && !editorRegistry.has(activeTab.value)) {
@@ -669,18 +809,36 @@ async function chooseAndOpenDocuments() {
 function openAuthorizedDocument(document: OpenDocument) {
   const existing = tabs.value.find(
     (tab) =>
-      tab.identity?.volume === document.identity.volume &&
-      tab.identity.index === document.identity.index,
+      (tab.identity?.volume === document.identity.volume &&
+        tab.identity.index === document.identity.index) ||
+      tab.displayPath?.toLocaleLowerCase() === document.displayPath.toLocaleLowerCase(),
   )
   if (existing) {
+    const hadConflict = editorRegistry.isDirty(existing.id)
+    const changedOnDisk =
+      existing.diskVersion && diskVersionChanged(existing.diskVersion, document.diskVersion)
+    const identityReplaced =
+      existing.identity?.volume !== document.identity.volume ||
+      existing.identity.index !== document.identity.index
+    if (existing.token && existing.token !== document.token)
+      void fileIpc?.unwatchDocument(existing.token)
     existing.token = document.token
     existing.displayPath = document.displayPath
-    if (!existing.modified) {
+    if (hadConflict) {
+      if (changedOnDisk) void beginConflict(existing.id, identityReplaced ? 'replaced' : 'modified')
+    } else {
+      editorRegistry.reload(existing.id, document.text)
       existing.metadata = document.metadata
       existing.readOnly = document.readOnly
       existing.diskVersion = document.diskVersion
+      existing.identity = document.identity
+      existing.modified = false
+      saveCoordinator.resume(existing.id)
+      saveStates.value = { ...saveStates.value, [existing.id]: 'saved' }
     }
+    watchAuthorizedDocument(document.token)
     activeTab.value = existing.id
+    watchAuthorizedDocument(document.token)
     return
   }
   const id = `file-${document.identity.volume}-${document.identity.index}`
@@ -697,6 +855,7 @@ function openAuthorizedDocument(document: OpenDocument) {
   })
   editorRegistry.register(id, document.text, document.text, document.readOnly)
   activeTab.value = id
+  watchAuthorizedDocument(document.token)
   if (!recentFiles.value.includes(document.displayPath)) {
     recentFiles.value.unshift(document.displayPath)
     recentFiles.value = recentFiles.value.slice(0, 50)
@@ -768,6 +927,94 @@ function onGlobalKeydown(event: KeyboardEvent) {
 }
 
 let resizeObserver: ResizeObserver | undefined
+let stopDocumentChanged: UnlistenFn | undefined
+function handleDocumentChanged(token: string) {
+  const tab = tabs.value.find((item) => item.token === token)
+  if (!tab?.token) return
+  if (saveCoordinator.status(tab.id) === 'saving') {
+    window.setTimeout(() => handleDocumentChanged(token), 250)
+    return
+  }
+  void fileIpc!
+    .readLatestDocument(tab.token)
+    .then(async (document) => {
+      if (!tab.diskVersion || !diskVersionChanged(tab.diskVersion, document.diskVersion)) return
+      const revision = editorRegistry.get(tab.id)?.revision
+      if (
+        !editorRegistry.isDirty(tab.id) &&
+        !['waiting', 'saving', 'conflict'].includes(saveCoordinator.status(tab.id))
+      ) {
+        const adopted = await fileIpc!.adoptDocumentVersion(tab.token!, document.diskVersion)
+        if (
+          revision !== editorRegistry.get(tab.id)?.revision ||
+          editorRegistry.isDirty(tab.id) ||
+          ['waiting', 'saving', 'conflict'].includes(saveCoordinator.status(tab.id))
+        ) {
+          await beginConflict(tab.id)
+          return
+        }
+        editorRegistry.reload(tab.id, adopted.text)
+        tab.metadata = adopted.metadata
+        tab.diskVersion = adopted.diskVersion
+        tab.identity = adopted.identity
+        tab.readOnly = adopted.readOnly
+        lastCommand.value = '文件已在外部更新，已安全重新加载'
+      } else {
+        await beginConflict(tab.id)
+      }
+    })
+    .catch(
+      (error) =>
+        void beginConflict(
+          tab.id,
+          (error as { code?: string })?.code === 'NOT_FOUND' ? 'missing' : 'unavailable',
+        ),
+    )
+}
+
+async function verifyOpenDocuments() {
+  if (!fileIpc) return
+  await Promise.all(
+    tabs.value
+      .filter((tab) => tab.token)
+      .map(async (tab) => {
+        if (!tab.token || !tab.diskVersion) return
+        if (saveCoordinator.status(tab.id) === 'saving') return
+        try {
+          const disk = await fileIpc.readLatestDocument(tab.token)
+          if (!diskVersionChanged(tab.diskVersion, disk.diskVersion)) return
+          const revision = editorRegistry.get(tab.id)?.revision
+          if (
+            !editorRegistry.isDirty(tab.id) &&
+            !['waiting', 'saving', 'conflict'].includes(saveCoordinator.status(tab.id))
+          ) {
+            const adopted = await fileIpc.adoptDocumentVersion(tab.token, disk.diskVersion)
+            if (
+              revision !== editorRegistry.get(tab.id)?.revision ||
+              editorRegistry.isDirty(tab.id) ||
+              ['waiting', 'saving', 'conflict'].includes(saveCoordinator.status(tab.id))
+            ) {
+              await beginConflict(tab.id)
+              return
+            }
+            editorRegistry.reload(tab.id, adopted.text)
+            tab.metadata = adopted.metadata
+            tab.diskVersion = adopted.diskVersion
+            tab.identity = adopted.identity
+            tab.readOnly = adopted.readOnly
+            lastCommand.value = '文件已在外部更新，已安全重新加载'
+          } else {
+            await beginConflict(tab.id)
+          }
+        } catch (error) {
+          await beginConflict(
+            tab.id,
+            (error as { code?: string })?.code === 'NOT_FOUND' ? 'missing' : 'unavailable',
+          )
+        }
+      }),
+  )
+}
 onMounted(() => {
   updateViewport()
   window.addEventListener('resize', updateViewport)
@@ -776,14 +1023,23 @@ onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
   window.addEventListener('pagehide', flushWindowState)
   window.addEventListener('beforeunload', flushWindowState)
+  window.addEventListener('focus', verifyOpenDocuments)
   resizeObserver = new ResizeObserver(updateCentralSize)
   if (central.value) resizeObserver.observe(central.value)
   updateCentralSize()
   scheduleActiveRender()
   if (activeTab.value) scheduleStats(activeTab.value)
+  if (fileIpc) {
+    void listen<string>('document-changed', (event) => handleDocumentChanged(event.payload)).then(
+      (unlisten) => {
+        stopDocumentChanged = unlisten
+      },
+    )
+  }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateViewport)
+  window.removeEventListener('focus', verifyOpenDocuments)
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', stopResize)
   window.removeEventListener('keydown', onGlobalKeydown)
@@ -802,6 +1058,7 @@ onBeforeUnmount(() => {
   previewScroll.dispose()
   editorRegistry.destroy()
   resizeObserver?.disconnect()
+  stopDocumentChanged?.()
 })
 </script>
 
@@ -1071,6 +1328,52 @@ onBeforeUnmount(() => {
         <header class="pane-header">
           <span id="source-title">源码</span><span class="pane-hint">Markdown</span>
         </header>
+        <section
+          v-if="activeDocument && conflicts[activeDocument.id]"
+          class="conflict-panel"
+          aria-label="文件冲突对比"
+          aria-live="polite"
+        >
+          <header class="conflict-heading">
+            <strong>{{ describeConflict(conflicts[activeDocument.id]!.reason) }}</strong>
+            <span>本地编辑不会自动覆盖磁盘版本。</span>
+          </header>
+          <div class="conflict-columns">
+            <section>
+              <h3>基线</h3>
+              <pre>{{ conflicts[activeDocument.id]!.base }}</pre>
+            </section>
+            <section>
+              <h3>当前编辑</h3>
+              <pre>{{ conflicts[activeDocument.id]!.local }}</pre>
+            </section>
+            <section>
+              <h3>磁盘版本</h3>
+              <pre>{{ conflicts[activeDocument.id]!.disk?.text ?? '文件不可用' }}</pre>
+            </section>
+          </div>
+          <div class="conflict-actions">
+            <button
+              v-if="conflicts[activeDocument.id]!.disk"
+              type="button"
+              @click="reloadConflict(activeDocument.id)"
+            >
+              重新加载磁盘版本
+            </button>
+            <button type="button" @click="keepConflictEdits(activeDocument.id)">
+              保留当前编辑
+            </button>
+            <button type="button" @click="saveDocumentAs(activeDocument.id)">另存为</button>
+            <button
+              v-if="conflicts[activeDocument.id]!.disk"
+              type="button"
+              class="conflict-overwrite"
+              @click="overwriteConflict(activeDocument.id)"
+            >
+              确认覆盖磁盘版本
+            </button>
+          </div>
+        </section>
         <div v-if="activeDocument && saveErrors[activeDocument.id]" class="save-error" role="alert">
           <span>{{ saveErrors[activeDocument.id] }}</span>
           <button

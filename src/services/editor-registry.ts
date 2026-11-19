@@ -159,6 +159,10 @@ export class EditorRegistry {
     return this.sessions.get(id)?.state.doc.toString() ?? ''
   }
 
+  getSavedText(id: string) {
+    return this.sessions.get(id)?.savedText ?? ''
+  }
+
   isDirty(id: string) {
     const session = this.sessions.get(id)
     return session ? session.state.doc.toString() !== session.savedText : false
@@ -167,6 +171,30 @@ export class EditorRegistry {
   markSaved(id: string, savedText = this.require(id).state.doc.toString()) {
     const session = this.require(id)
     session.savedText = savedText
+  }
+
+  reload(id: string, text: string) {
+    const session = this.require(id)
+    const selection = session.state.selection.main
+    const scrollTop =
+      this.view && this.activeId === id ? this.view.scrollDOM.scrollTop : session.scrollTop
+    session.savedText = text
+    this.applyTransaction(
+      id,
+      session.state.update({
+        changes: { from: 0, to: session.state.doc.length, insert: text },
+        selection: {
+          anchor: Math.min(selection.anchor, text.length),
+          head: Math.min(selection.head, text.length),
+        },
+      }),
+    )
+    for (const listener of this.listeners)
+      listener({ id, revision: session.revision, dirty: false })
+    requestAnimationFrame(() => {
+      if (this.view && this.activeId === id) this.view.scrollDOM.scrollTop = scrollTop
+      else session.scrollTop = scrollTop
+    })
   }
 
   dispatch(id: string, spec: TransactionSpec) {

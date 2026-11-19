@@ -366,7 +366,57 @@ impl AuthorizationRegistry {
         self.grants.remove(&token).is_some()
     }
 
+    pub fn document_path(&self, token: AuthorizationToken) -> Result<PathBuf, IpcError> {
+        let grant = self.grants.get(&token).ok_or_else(|| {
+            IpcError::new(ErrorCode::InvalidToken, "Authorization token is invalid")
+        })?;
+        if !matches!(grant.kind, GrantKind::File) {
+            return Err(IpcError::new(
+                ErrorCode::PathOutOfScope,
+                "A directory token cannot be watched as a document",
+            ));
+        }
+        Ok(grant.canonical_path.clone())
+    }
+
     pub fn read_document(&self, token: AuthorizationToken) -> Result<OpenDocument, IpcError> {
+        self.read_document_version(token, false)
+    }
+
+    pub fn read_latest_document(
+        &self,
+        token: AuthorizationToken,
+    ) -> Result<OpenDocument, IpcError> {
+        self.read_document_version(token, true)
+    }
+
+    pub fn adopt_document_version(
+        &mut self,
+        token: AuthorizationToken,
+        expected: &DiskVersion,
+    ) -> Result<OpenDocument, IpcError> {
+        let document = self.read_latest_document(token)?;
+        if &document.disk_version != expected {
+            return Err(IpcError::new(
+                ErrorCode::Conflict,
+                "The file changed again before the version was confirmed",
+            ));
+        }
+        let grant = self.grants.get_mut(&token).ok_or_else(|| {
+            IpcError::new(ErrorCode::InvalidToken, "Authorization token is invalid")
+        })?;
+        grant.identity = FileIdentity {
+            volume: document.identity.volume,
+            index: document.identity.index.clone(),
+        };
+        Ok(document)
+    }
+
+    fn read_document_version(
+        &self,
+        token: AuthorizationToken,
+        allow_replaced_identity: bool,
+    ) -> Result<OpenDocument, IpcError> {
         let grant = self.grants.get(&token).ok_or_else(|| {
             IpcError::new(ErrorCode::InvalidToken, "Authorization token is invalid")
         })?;
@@ -377,14 +427,17 @@ impl AuthorizationRegistry {
             ));
         }
         let current = open_entry(&grant.canonical_path).map_err(IpcError::from_io)?;
-        if current.identity != grant.identity {
+        if current.canonical_path != grant.canonical_path
+            || (!allow_replaced_identity && current.identity != grant.identity)
+        {
             return Err(IpcError::new(
                 ErrorCode::PathOutOfScope,
                 "The authorized entry has changed",
             ));
         }
         let file = File::open(&grant.canonical_path).map_err(IpcError::from_io)?;
-        if file_identity(&file).map_err(IpcError::from_io)? != grant.identity {
+        let actual_identity = file_identity(&file).map_err(IpcError::from_io)?;
+        if actual_identity != current.identity {
             return Err(IpcError::new(
                 ErrorCode::PathOutOfScope,
                 "The authorized entry has changed",
@@ -396,7 +449,7 @@ impl AuthorizationRegistry {
             .permissions()
             .readonly();
         let (disk_version, bytes) =
-            snapshot_document(&grant.canonical_path, &file, &grant.identity)?;
+            snapshot_document(&grant.canonical_path, &file, &actual_identity)?;
         let (text, metadata) = decode_document(&bytes)?;
         Ok(OpenDocument {
             token,
@@ -407,7 +460,7 @@ impl AuthorizationRegistry {
                 .unwrap_or_default()
                 .to_owned(),
             display_path: grant.canonical_path.display().to_string(),
-            identity: grant.identity.clone(),
+            identity: actual_identity,
             text,
             metadata,
             read_only,
@@ -912,6 +965,53 @@ mod tests {
             registry.inspect(token, "").unwrap_err().code,
             ErrorCode::PathOutOfScope
         );
+    }
+
+    #[test]
+    fn latest_version_requires_explicit_adoption_after_file_replacement() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes.md");
+        let replacement = directory.path().join("replacement.md");
+        fs::write(&path, "base").unwrap();
+        fs::write(&replacement, "disk").unwrap();
+        let mut registry = AuthorizationRegistry::default();
+        let token = registry.authorize_file(&path).unwrap();
+        let baseline = registry.read_document(token).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::rename(&replacement, &path).unwrap();
+
+        assert_eq!(
+            registry.read_document(token).unwrap_err().code,
+            ErrorCode::PathOutOfScope
+        );
+        let latest = registry.read_latest_document(token).unwrap();
+        assert_eq!(latest.text, "disk");
+        assert_eq!(
+            registry
+                .adopt_document_version(token, &baseline.disk_version)
+                .unwrap_err()
+                .code,
+            ErrorCode::Conflict
+        );
+        registry
+            .adopt_document_version(token, &latest.disk_version)
+            .unwrap();
+        assert_eq!(registry.read_document(token).unwrap().text, "disk");
+    }
+
+    #[test]
+    fn missing_authorized_file_is_not_recreated_by_latest_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notes.md");
+        fs::write(&path, "base").unwrap();
+        let mut registry = AuthorizationRegistry::default();
+        let token = registry.authorize_file(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            registry.read_latest_document(token).unwrap_err().code,
+            ErrorCode::NotFound
+        );
+        assert!(!path.exists());
     }
 
     #[test]

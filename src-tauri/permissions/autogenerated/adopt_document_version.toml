@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-adopt-document-version"
+description = "Enables the adopt_document_version command without any pre-configured scope."
+commands.allow = ["adopt_document_version"]
+
+[[permission]]
+identifier = "deny-adopt-document-version"
+description = "Denies the adopt_document_version command without any pre-configured scope."
+commands.deny = ["adopt_document_version"]

@@ -60,6 +60,23 @@ export class SaveCoordinator {
     return this.statuses.get(documentId) ?? 'idle'
   }
 
+  resume(documentId: string) {
+    const entry = this.entry(documentId)
+    this.clearTimer(entry)
+    entry.scheduled = undefined
+    entry.paused = false
+    this.setStatus(documentId, 'idle')
+  }
+
+  pause(documentId: string) {
+    const entry = this.entry(documentId)
+    this.clearTimer(entry)
+    entry.scheduled = undefined
+    this.resolveQueued(entry)
+    entry.paused = true
+    this.setStatus(documentId, 'conflict')
+  }
+
   dispose() {
     for (const entry of this.entries.values()) {
       this.clearTimer(entry)
@@ -105,7 +122,10 @@ export class SaveCoordinator {
         await request.save()
         request.onSaved()
         if (entry.scheduled?.revision === request.revision) entry.scheduled = undefined
-        this.setStatus(documentId, entry.queued || entry.scheduled ? 'waiting' : 'saved')
+        this.setStatus(
+          documentId,
+          entry.paused ? 'conflict' : entry.queued || entry.scheduled ? 'waiting' : 'saved',
+        )
       } catch (error) {
         request.onError?.(error)
         entry.paused = true

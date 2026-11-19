@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-latest-document"
+description = "Enables the read_latest_document command without any pre-configured scope."
+commands.allow = ["read_latest_document"]
+
+[[permission]]
+identifier = "deny-read-latest-document"
+description = "Denies the read_latest_document command without any pre-configured scope."
+commands.deny = ["read_latest_document"]

@@ -78,6 +78,8 @@ export interface SaveResult {
   diskVersion: DiskVersion
 }
 
+export type DocumentChangedEvent = { token: AuthorizationToken }
+
 export type TauriInvoke = <Result>(
   command: string,
   arguments_?: Record<string, unknown>,
@@ -96,6 +98,18 @@ export function createFileIpc(invoke: TauriInvoke) {
     },
     openDocument(token: AuthorizationToken): Promise<OpenDocument> {
       return invoke<OpenDocument>('open_document', { token })
+    },
+    readLatestDocument(token: AuthorizationToken): Promise<OpenDocument> {
+      return invoke<OpenDocument>('read_latest_document', { token })
+    },
+    adoptDocumentVersion(token: AuthorizationToken, expectedDiskVersion: DiskVersion) {
+      return invoke<OpenDocument>('adopt_document_version', { token, expectedDiskVersion })
+    },
+    watchDocument(token: AuthorizationToken): Promise<void> {
+      return invoke<void>('watch_document', { token })
+    },
+    unwatchDocument(token: AuthorizationToken): Promise<void> {
+      return invoke<void>('unwatch_document', { token })
     },
     saveDocument(
       token: AuthorizationToken,
