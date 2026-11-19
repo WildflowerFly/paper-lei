@@ -86,10 +86,16 @@ export class EditorRegistry {
   private view: EditorView | null = null
   private options: EditorOptions = {}
   private readonly listeners = new Set<(change: EditorChange) => void>()
+  private readonly scrollListeners = new Set<(id: string) => void>()
 
   subscribe(listener: (change: EditorChange) => void) {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
+  }
+
+  subscribeScroll(listener: (id: string) => void) {
+    this.scrollListeners.add(listener)
+    return () => this.scrollListeners.delete(listener)
   }
 
   register(id: string, text: string, savedText = text) {
@@ -143,6 +149,7 @@ export class EditorRegistry {
         parent,
         dispatch: (transaction) => this.dispatchActive(transaction),
       })
+      this.view.scrollDOM.addEventListener('scroll', this.handleScroll, { passive: true })
     } else {
       if (this.activeId) {
         const current = this.require(this.activeId)
@@ -188,6 +195,29 @@ export class EditorRegistry {
     return true
   }
 
+  scrollElement() {
+    return this.view?.scrollDOM
+  }
+
+  sourceLineAtViewportTop() {
+    const view = this.view
+    if (!view?.scrollDOM.clientHeight) return undefined
+    const height = view.scrollDOM.getBoundingClientRect().top - view.documentTop
+    const block = view.lineBlockAtHeight(height)
+    const offset = Math.max(0, Math.min(1, (height - block.top) / Math.max(1, block.height)))
+    return view.state.doc.lineAt(block.from).number - 1 + offset
+  }
+
+  scrollTopForSourceLine(sourceLine: number) {
+    const view = this.view
+    if (!view?.scrollDOM.clientHeight) return undefined
+    const line = Math.min(view.state.doc.lines, Math.floor(sourceLine) + 1)
+    const block = view.lineBlockAt(view.state.doc.line(line).from)
+    const documentOrigin =
+      view.documentTop - view.scrollDOM.getBoundingClientRect().top + view.scrollDOM.scrollTop
+    return documentOrigin + block.top + (sourceLine % 1) * block.height
+  }
+
   activeDocument() {
     return this.activeId
   }
@@ -195,9 +225,16 @@ export class EditorRegistry {
   destroy() {
     if (this.activeId && this.view)
       this.require(this.activeId).scrollTop = this.view.scrollDOM.scrollTop
+    if (this.view) this.view.scrollDOM.removeEventListener('scroll', this.handleScroll)
     this.view?.destroy()
     this.view = null
     this.activeId = null
+  }
+
+  private handleScroll = () => {
+    if (this.activeId) {
+      for (const listener of this.scrollListeners) listener(this.activeId)
+    }
   }
 
   private createState(id: string, text: string) {

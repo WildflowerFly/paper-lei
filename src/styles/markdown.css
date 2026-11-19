@@ -47,6 +47,10 @@ body {
   background: var(--md-canvas);
 }
 
+html {
+  overflow-anchor: none;
+}
+
 body {
   color: var(--md-text);
   font:

@@ -29,6 +29,7 @@ export type SettingsState = {
       navVisible: boolean
       mode: LayoutMode
       narrowPane: 'preview' | 'source'
+      scrollSync: boolean
     }
   }
   session: {
@@ -67,6 +68,7 @@ export function createDefaultSettings(): SettingsState {
         navVisible: true,
         mode: 'split',
         narrowPane: 'preview',
+        scrollSync: true,
       },
     },
     session: {
@@ -146,6 +148,7 @@ export function parseSettings(raw: unknown): SettingsState | null {
             : defaults.settings.layout.navVisible,
         mode: mode === 'split' || mode === 'preview' || mode === 'source' ? mode : 'split',
         narrowPane: narrowPane === 'preview' || narrowPane === 'source' ? narrowPane : 'preview',
+        scrollSync: typeof layout.scrollSync === 'boolean' ? layout.scrollSync : true,
       },
     },
     session: {

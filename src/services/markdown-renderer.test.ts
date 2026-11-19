@@ -16,6 +16,16 @@ describe('markdown renderer', () => {
     expect(result.html).toContain('<table>')
   })
 
+  it('keeps content anchors across insertions and distinguishes duplicate blocks', () => {
+    const source = '# Reading\n\n> Nested paragraph\n\nRepeated\n\nRepeated'
+    const keys = (text: string) =>
+      renderMarkdown(text).blocks.flatMap((block) => (block.scrollKey ? [block.scrollKey] : []))
+    const original = keys(source)
+    expect(original).toHaveLength(4)
+    expect(new Set(original).size).toBe(original.length)
+    expect(keys(`An inserted paragraph.\n\n${source}`).slice(1)).toEqual(original)
+  })
+
   it('renders task lists, footnotes, links and deterministic heading anchors', () => {
     const result = renderMarkdown(
       '# Release notes\n\n## Release notes\n\n- [ ] Pending\n- [x] Done\n\nSee [docs](https://example.com).[^1]\n\n[^1]: Reference',

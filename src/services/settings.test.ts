@@ -38,6 +38,7 @@ describe('settings persistence', () => {
     const state = createDefaultSettings()
     state.settings.theme = 'dark'
     state.settings.layout.mode = 'source'
+    state.settings.layout.scrollSync = false
     expect(saveSettings(state, storage)).toBe(true)
     expect(loadSettings(storage)).toEqual({ state, issue: 'none' })
 
@@ -57,6 +58,7 @@ describe('settings persistence', () => {
     expect(migrated?.settings.theme).toBe('dark')
     expect(migrated?.settings.layout.navWidth).toBe(360)
     expect(migrated?.settings.layout.previewRatio).toBe(20)
+    expect(migrated?.settings.layout.scrollSync).toBe(true)
     expect(migrated?.session.window.width).toBe(640)
     expect(migrated?.session.window.height).toBe(10000)
   })

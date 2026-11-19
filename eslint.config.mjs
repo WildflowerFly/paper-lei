@@ -22,6 +22,8 @@ export default tseslint.config(
         document: 'readonly',
         window: 'readonly',
         HTMLElement: 'readonly',
+        Document: 'readonly',
+        EventTarget: 'readonly',
         Element: 'readonly',
         MouseEvent: 'readonly',
         HTMLAnchorElement: 'readonly',

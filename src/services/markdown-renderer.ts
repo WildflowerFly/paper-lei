@@ -8,6 +8,7 @@ export type SourceBlock = {
   fromLine: number
   toLineExclusive: number
   kind: string
+  scrollKey?: string
 }
 
 export type RawRenderResult = {
@@ -75,8 +76,19 @@ function isMappedToken(token: Token) {
   ].includes(token.type)
 }
 
-function collectBlocks(tokens: Token[]) {
+function hashBlock(source: string[], start: number, end: number) {
+  let hash = 2166136261
+  for (let line = start; line < end; line++) {
+    for (const char of source[line] ?? '') hash = Math.imul(hash ^ char.codePointAt(0)!, 16777619)
+    hash = Math.imul(hash ^ 10, 16777619)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+function collectBlocks(tokens: Token[], source: string) {
   const blocks: SourceBlock[] = []
+  const lines = source.split(/\r\n?|\n/)
+  const occurrences = new Map<string, number>()
   let blockIndex = 0
   for (const token of tokens) {
     if (!token.map || token.hidden || !isMappedToken(token)) continue
@@ -92,12 +104,19 @@ function collectBlocks(tokens: Token[]) {
         : null
     if (target) target.attrSet('data-source-block', blockId)
     else if (token.type === 'fence') token.attrSet('data-source-block', blockId)
-    blocks.push({
+    const block: SourceBlock = {
       blockId,
       fromLine: token.map[0],
       toLineExclusive: token.map[1],
       kind: token.type,
-    })
+    }
+    if (token.level === 0) {
+      const fingerprint = `${token.type}:${hashBlock(lines, block.fromLine, block.toLineExclusive)}`
+      const occurrence = (occurrences.get(fingerprint) ?? 0) + 1
+      occurrences.set(fingerprint, occurrence)
+      block.scrollKey = `${fingerprint}:${occurrence}`
+    }
+    blocks.push(block)
   }
   return blocks
 }
@@ -129,7 +148,7 @@ markdown.renderer.rules.fence = (tokens, index, options, _env, slf) => {
 export function renderMarkdown(source: string): RawRenderResult {
   const tokens = markdown.parse(source, {})
   addHeadingAnchors(tokens)
-  const blocks = collectBlocks(tokens)
+  const blocks = collectBlocks(tokens, source)
   return { html: markdown.renderer.render(tokens, markdown.options, {}), blocks }
 }
 

@@ -20,8 +20,9 @@ import {
 } from './services/settings'
 import { EditorRegistry } from './services/editor-registry'
 import { createPreviewDocument } from './services/render-safety'
-import { RenderScheduler } from './services/markdown-renderer'
+import { RenderScheduler, type RenderResult } from './services/markdown-renderer'
 import { SourceMapService } from './services/source-map'
+import { PreviewScroll } from './services/preview-scroll'
 
 type NavTab = 'files' | 'search' | 'outline'
 type FileEntry = {
@@ -43,13 +44,16 @@ const previewRatio = ref(persisted.settings.layout.previewRatio)
 const navVisible = ref(persisted.settings.layout.navVisible)
 const layoutMode = ref<LayoutMode>(persisted.settings.layout.mode)
 const narrowPane = ref<'preview' | 'source'>(persisted.settings.layout.narrowPane)
+const scrollSync = ref(persisted.settings.layout.scrollSync)
 const themePreference = ref<ThemePreference>(persisted.settings.theme)
 const settingsOpen = ref(false)
 const editorRegistry = new EditorRegistry()
 const renderScheduler = new RenderScheduler()
 const sourceMapService = new SourceMapService()
-const previewHtml = ref('')
+const previewScroll = new PreviewScroll(editorRegistry)
+const previewShell = createPreviewDocument('')
 const previewFrame = useTemplateRef('previewFrame')
+let previewResult: Pick<RenderResult, 'documentId' | 'revision' | 'html' | 'blocks'> | undefined
 const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
   const tab = tabs.value.find((item) => item.id === id)
   if (tab) tab.modified = dirty
@@ -79,11 +83,13 @@ for (const tab of tabs.value) {
 }
 const stopRenderSubscription = renderScheduler.subscribe((result) => {
   if (result.documentId !== activeTab.value) return
-  sourceMapService.setBlocks(result.blocks)
-  previewHtml.value = renderScheduler.sanitize(result.html)
-  if (previewFrame.value) {
-    previewFrame.value.srcdoc = createPreviewDocument(previewHtml.value, themePreference.value)
+  previewResult = {
+    documentId: result.documentId,
+    revision: result.revision,
+    blocks: result.blocks,
+    html: renderScheduler.sanitize(result.html),
   }
+  updatePreview()
 })
 const openMenu = ref<CommandMenu | null>(null)
 const lastCommand = ref('')
@@ -151,8 +157,14 @@ function handlePreviewClick(event: MouseEvent) {
   const block = target.closest<HTMLElement>('[data-source-block]') ?? findNearestMappedBlock(target)
   if (!block) return
   const line = sourceMapService.getLine(block.dataset.sourceBlock ?? '')
-  if (line === undefined || !activeTab.value) return
-  editorRegistry.revealLine(line)
+  if (
+    line === undefined ||
+    !activeTab.value ||
+    previewResult?.documentId !== activeTab.value ||
+    previewResult.revision !== editorRegistry.get(activeTab.value)?.revision
+  )
+    return
+  previewScroll.revealSource(line)
 }
 
 function findNearestMappedBlock(target: Element) {
@@ -174,6 +186,27 @@ function bindPreviewInteractions() {
   if (!frameDocument) return
   frameDocument.removeEventListener('click', handlePreviewClick)
   frameDocument.addEventListener('click', handlePreviewClick)
+  previewScroll.attach(frameDocument)
+  updatePreviewTheme()
+  updatePreview()
+}
+
+function updatePreview() {
+  const result = previewResult?.documentId === activeTab.value ? previewResult : undefined
+  sourceMapService.setBlocks(result?.blocks ?? [])
+  previewScroll.update(
+    result?.documentId,
+    result?.revision ?? -1,
+    result?.html ?? '',
+    result?.blocks ?? [],
+  )
+}
+
+function updatePreviewTheme() {
+  const root = previewFrame.value?.contentDocument?.documentElement
+  if (!root) return
+  if (themePreference.value === 'system') delete root.dataset.theme
+  else root.dataset.theme = themePreference.value
 }
 
 function updateCentralSize() {
@@ -311,6 +344,10 @@ function dispatchCommand(id: CommandId) {
     case 'view.outline':
       activeNav.value = 'outline'
       break
+    case 'view.scrollSync':
+      scrollSync.value = !scrollSync.value
+      lastCommand.value = scrollSync.value ? '开启滚动同步' : '关闭滚动同步'
+      break
     case 'view.theme':
       cycleTheme()
       break
@@ -346,7 +383,7 @@ function dispatchCommand(id: CommandId) {
 }
 
 watch(
-  [navWidth, previewRatio, navVisible, layoutMode, narrowPane],
+  [navWidth, previewRatio, navVisible, layoutMode, narrowPane, scrollSync],
   () =>
     settingsStore.updateLayout({
       navWidth: navWidth.value,
@@ -354,6 +391,7 @@ watch(
       navVisible: navVisible.value,
       mode: layoutMode.value,
       narrowPane: narrowPane.value,
+      scrollSync: scrollSync.value,
     }),
   { flush: 'post' },
 )
@@ -366,12 +404,23 @@ watch(
     }),
   { deep: true, flush: 'post' },
 )
-watch(activeTab, scheduleActiveRender, { flush: 'post' })
-watch(themePreference, () => {
-  if (previewFrame.value) {
-    previewFrame.value.srcdoc = createPreviewDocument(previewHtml.value, themePreference.value)
-  }
-})
+watch(
+  activeTab,
+  (id) => {
+    previewResult = undefined
+    if (!id) previewScroll.detach()
+    updatePreview()
+    previewScroll.attachSource()
+    scheduleActiveRender()
+  },
+  { flush: 'post' },
+)
+watch(themePreference, updatePreviewTheme)
+watch(
+  [scrollSync, effectiveMode],
+  () => previewScroll.configure(scrollSync.value, effectiveMode.value === 'split'),
+  { immediate: true },
+)
 watch(recentFiles, () => settingsStore.setRecent(recentFiles.value), { deep: true, flush: 'post' })
 watch(favoriteFiles, () => settingsStore.setFavorites(favoriteFiles.value), {
   deep: true,
@@ -459,6 +508,7 @@ onBeforeUnmount(() => {
   stopEditorSubscription()
   stopRenderSubscription()
   renderScheduler.dispose()
+  previewScroll.dispose()
   editorRegistry.destroy()
   resizeObserver?.disconnect()
 })
@@ -494,13 +544,16 @@ onBeforeUnmount(() => {
               v-for="command in menuCommands(menu.id)"
               :key="command.id"
               type="button"
-              role="menuitem"
+              :role="command.id === 'view.scrollSync' ? 'menuitemcheckbox' : 'menuitem'"
+              :aria-checked="command.id === 'view.scrollSync' ? scrollSync : undefined"
               :disabled="!commandEnabled(command)"
               @click="dispatchCommand(command.id)"
             >
-              <span>{{ command.label }}</span><kbd v-if="command.shortcut">{{
-                command.shortcut
-              }}</kbd>
+              <span>{{ command.label }}</span><span
+                v-if="command.id === 'view.scrollSync' && scrollSync"
+                aria-hidden="true"
+                >✓</span
+              ><kbd v-if="command.shortcut">{{ command.shortcut }}</kbd>
             </button>
           </div>
         </div>
@@ -703,7 +756,7 @@ onBeforeUnmount(() => {
           class="preview-frame"
           title="隔离的 Markdown 预览"
           sandbox="allow-same-origin"
-          :srcdoc="createPreviewDocument(previewHtml, themePreference)"
+          :srcdoc="previewShell"
           @load="bindPreviewInteractions"
         />
       </section>
