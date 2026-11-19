@@ -109,9 +109,10 @@ PRD 的七个开发阶段保留核心顺序；本清单将早期风险验证和�
   - 验收：两个草稿切换后光标、选区、滚动与历史独立；输入法和 Emoji 正常；配置修改不重建历史。对应 PRD §4.2、AT-07。
   - 证据：[CodeMirror 编辑器与独立文档状态验收记录](./verification/EDT-01.md)，EditorRegistry 单测与专项 Playwright 测试通过。
 
-- [ ] **EDT-02：实现安全的 Markdown 基础解析与调度** — P0 / L；依赖：EDT-01、FND-05。
+- [x] **EDT-02：实现安全的 Markdown 基础解析与调度** — P0 / L；依赖：EDT-01、FND-05。
   - 产出：Worker 解析、100ms 调度、document/revision/renderEpoch 校验、块级结果与基础净化。
   - 验收：输入后自动更新，无需预览按钮；旧文档或旧 revision 结果不会覆盖当前视图；危险 HTML 在首次渲染即被过滤。对应 AT-03、AT-04。
+  - 证据：[Markdown 基础解析与调度验收记录](./verification/EDT-02.md)，解析调度单测与实时预览专项 Playwright 测试通过。
 
 - [ ] **EDT-03：实现 GitHub 风格 Markdown 样式与 GFM** — P0 / M；依赖：EDT-02、UI-01。
   - 产出：隔离的 `.markdown-body` 样式，标题、列表、引用、表格、任务列表、删除线、自动链接、脚注及锚点。

@@ -407,6 +407,14 @@ button:disabled {
   font-size: 16px;
   line-height: 1.5;
 }
+.preview-frame {
+  display: block;
+  width: 100%;
+  height: calc(100% - 32px);
+  min-height: 0;
+  border: 0;
+  background: var(--bg-app);
+}
 .markdown-body h2 {
   padding-bottom: 0.3em;
   border-bottom: 1px solid var(--border-default);

@@ -19,6 +19,8 @@ import {
   type ThemePreference,
 } from './services/settings'
 import { EditorRegistry } from './services/editor-registry'
+import { createPreviewDocument } from './services/render-safety'
+import { RenderScheduler } from './services/markdown-renderer'
 
 type NavTab = 'files' | 'search' | 'outline'
 type FileEntry = {
@@ -43,9 +45,17 @@ const narrowPane = ref<'preview' | 'source'>(persisted.settings.layout.narrowPan
 const themePreference = ref<ThemePreference>(persisted.settings.theme)
 const settingsOpen = ref(false)
 const editorRegistry = new EditorRegistry()
+const renderScheduler = new RenderScheduler()
+const previewHtml = ref('')
+const previewFrame = useTemplateRef('previewFrame')
 const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
   const tab = tabs.value.find((item) => item.id === id)
   if (tab) tab.modified = dirty
+  renderScheduler.schedule({
+    documentId: id,
+    revision: editorRegistry.get(id)?.revision ?? 0,
+    source: editorRegistry.getText(id),
+  })
 })
 const activeNav = ref<NavTab>('files')
 const activeTab = ref<string | null>(persisted.session.activeDocument)
@@ -65,6 +75,13 @@ for (const tab of tabs.value) {
   const text = editorTexts[tab.id] ?? ''
   editorRegistry.register(tab.id, text, tab.modified ? '' : text)
 }
+const stopRenderSubscription = renderScheduler.subscribe((result) => {
+  if (result.documentId !== activeTab.value) return
+  previewHtml.value = renderScheduler.sanitize(result.html)
+  if (previewFrame.value) {
+    previewFrame.value.srcdoc = createPreviewDocument(previewHtml.value)
+  }
+})
 const openMenu = ref<CommandMenu | null>(null)
 const lastCommand = ref('')
 const dragging = ref(false)
@@ -106,6 +123,15 @@ applyTheme(themePreference.value)
 
 function updateViewport() {
   viewportWidth.value = window.innerWidth
+}
+
+function scheduleActiveRender() {
+  if (!activeTab.value) return
+  renderScheduler.schedule({
+    documentId: activeTab.value,
+    revision: editorRegistry.get(activeTab.value)?.revision ?? 0,
+    source: editorRegistry.getText(activeTab.value),
+  })
 }
 
 function updateCentralSize() {
@@ -298,6 +324,7 @@ watch(
     }),
   { deep: true, flush: 'post' },
 )
+watch(activeTab, scheduleActiveRender, { flush: 'post' })
 watch(recentFiles, () => settingsStore.setRecent(recentFiles.value), { deep: true, flush: 'post' })
 watch(favoriteFiles, () => settingsStore.setFavorites(favoriteFiles.value), {
   deep: true,
@@ -371,6 +398,7 @@ onMounted(() => {
   resizeObserver = new ResizeObserver(updateCentralSize)
   if (central.value) resizeObserver.observe(central.value)
   updateCentralSize()
+  scheduleActiveRender()
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateViewport)
@@ -382,6 +410,8 @@ onBeforeUnmount(() => {
   flushWindowState()
   settingsStore.flush()
   stopEditorSubscription()
+  stopRenderSubscription()
+  renderScheduler.dispose()
   editorRegistry.destroy()
   resizeObserver?.disconnect()
 })
@@ -621,16 +651,13 @@ onBeforeUnmount(() => {
         <header class="pane-header">
           <span id="preview-title">预览</span><span class="pane-hint">实时阅读</span>
         </header>
-        <article class="markdown-body">
-          <h2>Markdown Studio</h2>
-          <p>在左侧管理文件，在这里阅读渲染结果。</p>
-          <blockquote>预览和源码区域可以独立滚动。</blockquote>
-          <h3>开始使用</h3>
-          <ul>
-            <li>打开或新建 Markdown 文档</li>
-            <li>在右侧编辑源码</li>
-          </ul>
-        </article>
+        <iframe
+          ref="previewFrame"
+          class="preview-frame"
+          title="隔离的 Markdown 预览"
+          sandbox="allow-same-origin"
+          :srcdoc="createPreviewDocument(previewHtml)"
+        />
       </section>
       <div
         class="split-resizer"
