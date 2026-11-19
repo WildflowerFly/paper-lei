@@ -21,6 +21,7 @@ import {
 import { EditorRegistry } from './services/editor-registry'
 import { createPreviewDocument } from './services/render-safety'
 import { RenderScheduler } from './services/markdown-renderer'
+import { SourceMapService } from './services/source-map'
 
 type NavTab = 'files' | 'search' | 'outline'
 type FileEntry = {
@@ -46,6 +47,7 @@ const themePreference = ref<ThemePreference>(persisted.settings.theme)
 const settingsOpen = ref(false)
 const editorRegistry = new EditorRegistry()
 const renderScheduler = new RenderScheduler()
+const sourceMapService = new SourceMapService()
 const previewHtml = ref('')
 const previewFrame = useTemplateRef('previewFrame')
 const stopEditorSubscription = editorRegistry.subscribe(({ id, dirty }) => {
@@ -77,6 +79,7 @@ for (const tab of tabs.value) {
 }
 const stopRenderSubscription = renderScheduler.subscribe((result) => {
   if (result.documentId !== activeTab.value) return
+  sourceMapService.setBlocks(result.blocks)
   previewHtml.value = renderScheduler.sanitize(result.html)
   if (previewFrame.value) {
     previewFrame.value.srcdoc = createPreviewDocument(previewHtml.value, themePreference.value)
@@ -132,6 +135,45 @@ function scheduleActiveRender() {
     revision: editorRegistry.get(activeTab.value)?.revision ?? 0,
     source: editorRegistry.getText(activeTab.value),
   })
+}
+
+function handlePreviewClick(event: MouseEvent) {
+  if (event.button !== 0) return
+  const target = event.target as Element | null
+  if (!target || typeof target.closest !== 'function') return
+  if (target.ownerDocument.getSelection()?.toString()) return
+  const link = target.closest<HTMLAnchorElement>('a')
+  if (link) {
+    if (!link.getAttribute('href')?.startsWith('#')) event.preventDefault()
+    return
+  }
+  if (target.closest('button, input, img, summary, video, audio, [contenteditable="true"]')) return
+  const block = target.closest<HTMLElement>('[data-source-block]') ?? findNearestMappedBlock(target)
+  if (!block) return
+  const line = sourceMapService.getLine(block.dataset.sourceBlock ?? '')
+  if (line === undefined || !activeTab.value) return
+  editorRegistry.revealLine(line)
+}
+
+function findNearestMappedBlock(target: Element) {
+  const targetTop = target.getBoundingClientRect().top
+  const candidates = [
+    ...(target.closest('article')?.querySelectorAll<HTMLElement>('[data-source-block]') ?? []),
+  ]
+  return candidates.reduce<HTMLElement | null>((nearest, candidate) => {
+    if (!nearest) return candidate
+    return Math.abs(candidate.getBoundingClientRect().top - targetTop) <
+      Math.abs(nearest.getBoundingClientRect().top - targetTop)
+      ? candidate
+      : nearest
+  }, null)
+}
+
+function bindPreviewInteractions() {
+  const frameDocument = previewFrame.value?.contentDocument
+  if (!frameDocument) return
+  frameDocument.removeEventListener('click', handlePreviewClick)
+  frameDocument.addEventListener('click', handlePreviewClick)
 }
 
 function updateCentralSize() {
@@ -662,6 +704,7 @@ onBeforeUnmount(() => {
           title="隔离的 Markdown 预览"
           sandbox="allow-same-origin"
           :srcdoc="createPreviewDocument(previewHtml, themePreference)"
+          @load="bindPreviewInteractions"
         />
       </section>
       <div

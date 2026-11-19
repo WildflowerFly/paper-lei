@@ -4,7 +4,7 @@ import { renderMarkdown, RenderScheduler } from './markdown-renderer'
 describe('markdown renderer', () => {
   it('renders Markdown and returns source line ranges', () => {
     const result = renderMarkdown('# 标题\n\n正文 **加粗**')
-    expect(result.html).toContain('<h1 id="标题">')
+    expect(result.html).toContain('<h1 id="标题" data-source-block="block-0">')
     expect(result.html).toContain('<strong>加粗</strong>')
     expect(result.blocks[0]).toMatchObject({ fromLine: 0, toLineExclusive: 1 })
     expect(result.blocks[1]).toMatchObject({ fromLine: 2, toLineExclusive: 3 })

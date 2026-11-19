@@ -432,6 +432,9 @@ button:disabled {
 .markdown-editor .cm-activeLineGutter {
   background: var(--bg-hover);
 }
+.markdown-editor .cm-source-highlight {
+  background: color-mix(in srgb, var(--focus-ring) 18%, transparent);
+}
 .markdown-editor .cm-content {
   min-height: calc(100vh - 180px);
   padding: 24px;

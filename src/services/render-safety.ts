@@ -47,13 +47,22 @@ export function sanitizeRawHtml(html: string, allowGeneratedAttributes = false):
     'start',
     'href',
     ...(allowGeneratedAttributes
-      ? ['class', 'id', 'aria-label', 'aria-hidden', 'checked', 'disabled', 'type']
+      ? [
+          'class',
+          'id',
+          'aria-label',
+          'aria-hidden',
+          'checked',
+          'disabled',
+          'type',
+          'data-source-block',
+        ]
       : []),
   ]
   return DOMPurify.sanitize(html, {
     ALLOWED_TAGS: rawTags,
     ALLOWED_ATTR: allowedAttributes,
-    ALLOW_DATA_ATTR: false,
+    ALLOW_DATA_ATTR: allowGeneratedAttributes,
     ALLOW_ARIA_ATTR: false,
     SANITIZE_NAMED_PROPS: true,
   })

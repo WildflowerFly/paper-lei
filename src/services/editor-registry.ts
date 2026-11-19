@@ -10,17 +10,39 @@ import {
 } from '@codemirror/language'
 import {
   EditorState,
+  StateEffect,
+  StateField,
   type Extension,
   type Transaction,
   type TransactionSpec,
 } from '@codemirror/state'
 import {
+  Decoration,
   keymap,
   lineNumbers,
   highlightActiveLine,
   drawSelection,
   EditorView,
+  type DecorationSet,
 } from '@codemirror/view'
+
+const setSourceHighlight = StateEffect.define<{ from: number } | null>()
+const sourceHighlight = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, transaction) {
+    let next = value.map(transaction.changes)
+    for (const effect of transaction.effects) {
+      if (!effect.is(setSourceHighlight)) continue
+      next = effect.value
+        ? Decoration.set([
+            Decoration.line({ class: 'cm-source-highlight' }).range(effect.value.from),
+          ])
+        : Decoration.none
+    }
+    return next
+  },
+  provide: (field) => EditorView.decorations.from(field),
+})
 
 export type EditorSession = {
   id: string
@@ -55,6 +77,7 @@ const baseExtensions: Extension = [
   EditorState.tabSize.of(2),
   indentUnit.of('  '),
   EditorState.allowMultipleSelections.of(true),
+  sourceHighlight,
 ]
 
 export class EditorRegistry {
@@ -147,6 +170,22 @@ export class EditorRegistry {
 
   redo() {
     if (this.view) redo(this.view)
+  }
+
+  revealLine(line: number) {
+    if (!this.view || !this.activeId) return false
+    const documentLine = Math.min(this.view.state.doc.lines, Math.max(1, line + 1))
+    const from = this.view.state.doc.line(documentLine).from
+    const to = this.view.state.doc.line(documentLine).to
+    this.view.dispatch({
+      selection: { anchor: from, head: to },
+      effects: [setSourceHighlight.of({ from })],
+      scrollIntoView: true,
+    })
+    window.setTimeout(() => {
+      if (this.view && this.activeId) this.view.dispatch({ effects: setSourceHighlight.of(null) })
+    }, 900)
+    return true
   }
 
   activeDocument() {

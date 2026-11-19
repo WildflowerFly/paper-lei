@@ -63,6 +63,45 @@ function addHeadingAnchors(tokens: Token[]) {
   }
 }
 
+function isMappedToken(token: Token) {
+  return [
+    'heading_open',
+    'paragraph_open',
+    'bullet_list_open',
+    'ordered_list_open',
+    'blockquote_open',
+    'fence',
+    'table_open',
+  ].includes(token.type)
+}
+
+function collectBlocks(tokens: Token[]) {
+  const blocks: SourceBlock[] = []
+  let blockIndex = 0
+  for (const token of tokens) {
+    if (!token.map || token.hidden || !isMappedToken(token)) continue
+    const blockId = `block-${blockIndex++}`
+    const target =
+      token.type === 'heading_open' ||
+      token.type === 'paragraph_open' ||
+      token.type === 'bullet_list_open' ||
+      token.type === 'ordered_list_open' ||
+      token.type === 'blockquote_open' ||
+      token.type === 'table_open'
+        ? token
+        : null
+    if (target) target.attrSet('data-source-block', blockId)
+    else if (token.type === 'fence') token.attrSet('data-source-block', blockId)
+    blocks.push({
+      blockId,
+      fromLine: token.map[0],
+      toLineExclusive: token.map[1],
+      kind: token.type,
+    })
+  }
+  return blocks
+}
+
 markdown.renderer.rules.heading_open = (tokens, index, options, _env, slf) => {
   const token = tokens[index]
   if (!token) return ''
@@ -72,35 +111,25 @@ markdown.renderer.rules.heading_open = (tokens, index, options, _env, slf) => {
   return `${opening}<a class="heading-anchor" href="#${id}" aria-label="链接到本节"></a>`
 }
 
-markdown.renderer.rules.table_open = () => '<div class="table-scroll"><table>'
 markdown.renderer.rules.table_close = () => '</table></div>'
+markdown.renderer.rules.table_open = (tokens, index) => {
+  const blockId = tokens[index]?.attrGet('data-source-block')
+  return `<div class="table-scroll"${blockId ? ` data-source-block="${blockId}"` : ''}><table>`
+}
+const defaultFenceRenderer = markdown.renderer.rules.fence ?? (() => '')
+markdown.renderer.rules.fence = (tokens, index, options, _env, slf) => {
+  const token = tokens[index]
+  if (!token) return ''
+  const info = defaultFenceRenderer(tokens, index, options, _env, slf)
+  if (!info) return ''
+  const blockId = token.attrGet('data-source-block')
+  return blockId ? info.replace('<pre>', `<pre data-source-block="${blockId}">`) : info
+}
 
 export function renderMarkdown(source: string): RawRenderResult {
   const tokens = markdown.parse(source, {})
   addHeadingAnchors(tokens)
-  const blocks: SourceBlock[] = []
-  let blockIndex = 0
-  for (const token of tokens) {
-    if (!token.map || token.hidden) continue
-    if (
-      ![
-        'heading_open',
-        'paragraph_open',
-        'bullet_list_open',
-        'ordered_list_open',
-        'blockquote_open',
-        'fence',
-        'table_open',
-      ].includes(token.type)
-    )
-      continue
-    blocks.push({
-      blockId: `block-${blockIndex++}`,
-      fromLine: token.map[0],
-      toLineExclusive: token.map[1],
-      kind: token.type,
-    })
-  }
+  const blocks = collectBlocks(tokens)
   return { html: markdown.renderer.render(tokens, markdown.options, {}), blocks }
 }
 
